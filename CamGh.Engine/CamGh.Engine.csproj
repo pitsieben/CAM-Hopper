@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup><TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CamGh.Core\CamGh.Core.csproj" />
+    <Reference Include="Clipper2Lib"><HintPath>..\CamGh.Core\lib\Clipper2Lib.dll</HintPath><Private>true</Private></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Dashboard page served from beside the exe (build and publish output). -->
+    <Content Update="wwwroot\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!--
+    One-click packaging. Runs after every publish of the engine (Visual Studio: Publish with the CamGhPackage profile).
+    1. Builds CamGh.Grasshopper in the same configuration.
+    2. Copies the published engine (exe, DLLs, wwwroot dashboard) into ..\publish\package.
+    3. Copies CamGh.Grasshopper.dll there as CamGh.gha, plus the two System.Drawing support DLLs it needs.
+    Afterwards close Rhino and run Install-CamGh.bat.
+  -->
+  <Target Name="CamGhPackage" AfterTargets="Publish" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <CamGhRoot>$([System.IO.Path]::GetFullPath('$(MSBuildProjectDirectory)\..'))</CamGhRoot>
+      <CamGhPackageDir>$(CamGhRoot)\publish\package\</CamGhPackageDir>
+      <CamGhEnginePublishDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(PublishDir)'))</CamGhEnginePublishDir>
+    </PropertyGroup>
+    <Message Importance="high" Text="CamGh: building the Grasshopper plug-in ($(Configuration))..." />
+    <MSBuild Projects="$(CamGhRoot)\CamGh.Grasshopper\CamGh.Grasshopper.csproj" Targets="Build"
+             Properties="Configuration=$(Configuration)"
+             RemoveProperties="RuntimeIdentifier;SelfContained;PublishDir;PublishProfile;PublishProtocol;TargetFramework;_IsPublishing;PublishReadyToRun;PublishSingleFile">
+      <Output TaskParameter="TargetOutputs" ItemName="CamGhPluginAssembly" />
+    </MSBuild>
+    <PropertyGroup>
+      <CamGhPluginDir>@(CamGhPluginAssembly->'%(RootDir)%(Directory)')</CamGhPluginDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <CamGhEngineFiles Include="$(CamGhEnginePublishDir)**\*" />
+      <CamGhPluginSupport Include="$(CamGhPluginDir)System.Drawing.Common.dll" Condition="Exists('$(CamGhPluginDir)System.Drawing.Common.dll')" />
+      <CamGhPluginSupport Include="$(CamGhPluginDir)Microsoft.Win32.SystemEvents.dll" Condition="Exists('$(CamGhPluginDir)Microsoft.Win32.SystemEvents.dll')" />
+    </ItemGroup>
+    <Error Condition="!Exists('$(CamGhEnginePublishDir)wwwroot\index.html')" Text="CamGh: the dashboard page is missing from $(CamGhEnginePublishDir)wwwroot. Check that CamGh.Engine\wwwroot\index.html exists." />
+    <MakeDir Directories="$(CamGhPackageDir)" />
+    <Copy SourceFiles="@(CamGhEngineFiles)" DestinationFiles="@(CamGhEngineFiles->'$(CamGhPackageDir)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(CamGhPluginAssembly)" DestinationFiles="$(CamGhPackageDir)CamGh.gha" />
+    <Copy SourceFiles="@(CamGhPluginSupport)" DestinationFolder="$(CamGhPackageDir)" SkipUnchangedFiles="true" />
+    <Message Importance="high" Text="CamGh: package ready in $(CamGhPackageDir). Close Rhino and run Install-CamGh.bat." />
+  </Target>
+</Project>

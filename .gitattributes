@@ -1,0 +1,19 @@
+# Normalise line endings in the repo, check out native on each machine.
+* text=auto
+
+*.cs       text diff=csharp
+*.csproj   text
+*.sln      text eol=crlf
+*.pubxml   text
+*.md       text
+*.html     text
+*.json     text
+*.bat      text eol=crlf
+
+# Binary: never diffed or line-ending converted.
+*.gh       binary
+*.ghx      binary
+*.dll      binary
+*.3dm      binary
+*.pdf      binary
+*.png      binary
