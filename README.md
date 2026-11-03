@@ -2,11 +2,33 @@
 
 This is a first vertical slice for a Rhino 8 / Grasshopper CAM plugin with a separate local computation process. It is a research prototype, not a machine-ready CAM system.
 
+## Requirements
+
+- **Rhino 8** for Windows, installed at `C:\Program Files\Rhino 8`. The Grasshopper project
+  references `RhinoCommon.dll`, `Eto.dll`, `Grasshopper.dll` and `GH_IO.dll` in place; if your
+  Rhino lives elsewhere, edit the four `HintPath` entries in `CamGh.Grasshopper.csproj`.
+- **.NET 8 SDK**, or Visual Studio 2022 17.8 or newer with the .NET desktop workload.
+- Windows x64. The engine is published self-contained, so end users need only Rhino 8.
+
+## Quick start
+
+```
+git clone https://github.com/pitsiebenaler112/CamGh.git
+cd CamGh
+dotnet publish CamGh.Engine -p:PublishProfile=CamGhPackage
+Install-CamGh.bat
+```
+
+Close Rhino first: Grasshopper holds a file lock on a loaded `.gha`. The publish step also
+builds the Grasshopper plug-in and assembles `publish\package`; see [Build](#build) for what
+it does and how to run the same thing from Visual Studio. Licence: [MIT](LICENSE); bundled
+components are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
 ## Projects
 
 - `CamGh.Core`: mesh path algorithms and quality metrics, independent of Rhino.
 - `CamGh.Engine`: .NET 8 local HTTP worker bound to loopback at `127.0.0.1:47831`.
-- `CamGh.Grasshopper`: Rhino 8 components. Placing CAM Core opens a small status window, starts the worker if needed, waits for its health endpoint, and reports whether it is running and awaiting commands. Operation components create typed commands, and CAM Core submits them as a job and returns a point tree with one branch per path.
+- `CamGh.Grasshopper`: Rhino 8 components. Placing CAM Core starts the worker if needed, waits for its health endpoint, and reports the engine state as the component's own status message. Its **Settings** button opens the dashboard window. Operation components create typed commands, and CAM Core submits them as a job and returns a point tree with one branch per path.
 
 ## Grasshopper components
 
