@@ -1,160 +1,26 @@
 using System.Drawing;
-using System.Drawing.Drawing2D;
 
 namespace CamGh.Grasshopper;
 
-/// <summary>Small transparent 50x50 icons used by the CamGh Grasshopper components.</summary>
+/// <summary>Pixel-art 50x50 icons for the CamGh components (dark tile, white line work, lime accent).
+/// Sources live in docs/images/icons; they are embedded here as PNG so no resource files are needed.</summary>
 internal static class ComponentIcons
 {
-    private static readonly Color Ink = Color.FromArgb(27, 45, 59);
-    private static readonly Color Cyan = Color.FromArgb(0, 174, 190);
-    private static readonly Color Blue = Color.FromArgb(47, 112, 190);
-    private static readonly Color Orange = Color.FromArgb(239, 139, 48);
+    public static readonly Bitmap Core = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAABL0lEQVR4Xu2asQoCMQxAPXEQ3NycHNz9Ob/Dn3N3uMnNTXBS4SSHBEPS3PXSS/PA4QrWNi+tzdFmgXg+7m/cViLrzbb5HdeyxEFqWMGXwMT+cNT0MzkwXjDjxkgzNxOY9nrpmtwYMZ/I+fbqPhiqncJ8ImPR71pWnHbfWIIVeE4ljAD/8nsI2v7qMYIjhHM6N9K1498IjgQ8S3NYuvtwxqX9+DVC5SS331MGqYhSv6PFrxEuJykzVHuqKS1+jQyFW0tSuMzAuDESFWJpuEmtmEhpuDHC1uzw3sga7g1oPUYALiK5kGZEfUakUBVk6tkplTDCgQ1QtflYhBGO3Abc1iPsP7uW3LtUGJEytQmgvl1Leuaxoh4jVqfeVNwY6W/YzO0GBKxZf3dRcC7GfS1jPnAog5w18DhjAAAAAElFTkSuQmCC");
+    public static readonly Bitmap CutParameters = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAABH0lEQVR4Xu2aMQ7CMAxFG8SAxMbGxMCKuBzn6E04TXcGpm5sSEyAhJQKRYm+EmLifvmNUdPG/nb6B7su4HG/vcI1jazWG/d9roXGQ5aw9Ju8Erv9seQ9f8ef1ytDo4ibmxIh18vwWaJRxALRxnRr5dKPz+iW07aNyG2+KoAFog3YI/6eDjl3h2gsqed/BTkOmtKCiqQy0Y/xHKPMSUGjiAWiDdgjKVr9wVPQlFaxIqVIeTQaRSwQbcAeqe2dSj0acgw0pQUVQZnIRcqj0ShigWgD9khtpDwaTWlVV0TKSyFoFLFAtAF7JNdrlXopBHIYNKUFFUGZCJHyUggaRSwQbcAeyUXKSyGstLRBo8g0YTO3CQjvOPhmUcJat3mtxrwBe8dDfQ/+XMAAAAAASUVORK5CYII=");
+    public static readonly Bitmap HorizontalRoughing = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAABH0lEQVR4Xu2avwoCMQyHrTgIbm5ODu4+jW/ic/hy7jc4ubkpTiqc5JByoX/jpT/yjQeGtl8SG6ibeTzvt7f/TSPL1dr9rmuucZE5LOhHZGK72+fE+Tu0XjIDY8S1ZsLn0p37TzBGhhqpzen6Gg153MicnUzUCRAzQidPZqRMEDBGbCPaYGuE+nMxj2+EQ1ccqYe7ecCkVrBrabl7hTIExohtRBvBGuFum9Kk1iZMaiUbIVJPLJZQd+KAMWIb0UZ2jfhwE2GIWnMKTGpVM0LEnnCuQetarWA1wlE792MxIz6x3UoKGCO2EW1k/7Pnzg1SwKRWshGpybAUGCO2EW0Ea0Rbd4KfR1gjWrsTvJHhhU1rLyCodvHeovg5Z++1JuYDJiVCWLfQnzsAAAAASUVORK5CYII=");
+    public static readonly Bitmap ParallelFinishing = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAA/UlEQVR4Xu2auwrCQBBFXbEQ7OysUtj7c36HP2dvYWVnF7BSQZggC4vegYk31znlkoSdPfMosmVWceuvj3qNkeVqXd73NWfcpIeFvWQmuu3O853Rsf2aGRkjZWomas6n42tJxshQI61I2WjVsL4Rg6WLWS20kDGSgbCRRthozpEWh8t9lBj2GyxZsKeJgY2gJ4XiNS5jJANhI42wAXctb1eJRia1YCNG9DxBkTGSgbCRRthwd63oeYJ2RZnUgo2gJ4XiNS1jJANhI42wAXctb1eJRia1YCPRc8TL/xj59KeIBX0jLP8Ov0XGyHDDZmo3IKx29e6i1DmY97V+zBMY9TmfFlCCYgAAAABJRU5ErkJggg==");
+    public static readonly Bitmap MachineSetup = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAABFklEQVR4Xu2aPQ7CMAxGG8SAxMbGxMCKOA034Ry9CadBrAxM3dhATIBo5YIiolI3P4753tjSNM5z6gTFFBa3y/lhX5PIZDozn/0aSewkhzE9RCYWyzWnnehQf8mMGiMmNxM2p+O+vqTGCAKRBoxIA0ak0Vb2VJTV/eurt/N+ydLv14JBINJIZuS1RqJ1kg+SBeKbaF8te/Tf+55mLOk+dz8EI124DYQBRlwVeXM91EPOzXUuMOIitglCjREEIg12Zaf9wtCK7AukljTUGGHPEV/QCmFXrOomy6ppGXv23MEc8UXfueDi/4x0/ePRdT/0qliNEQQiDRiRxs9rrdBfnaGoSa32hE1uJyCobuk7i2LnJs5rJeYJX4RElcEPYscAAAAASUVORK5CYII=");
+    public static readonly Bitmap Stock = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAABP0lEQVR4Xu2asQ7CIBCGrXEwcXPr5ODuy/kcvpy7g5Obm8ZJTWqP6BnyAwW9HveNrbT0PuC4SDNh3C7nB78mkfli2bz3ayqxkynMqBGZWK03Kc/5OdRfMqPGSDM2E5zjYd9dUmPEPkQaZkQaLo/khlYTonR+UjO0shlBBtD9oZiR2AjzORLbHlGfkdwRzG2oHiPIxO5074bvto2LCbVzeab9rIPQezlxbxdMcB6hMf0VqT6SPMLcELpP8OeHUp8R357JRfD6+gWZSzWAVjMf9RrheCPIDPnmQK5dsRnxgcZ4LgOWR4ZSygShZo7Yh0jDjEjDjEgD1iPeOqTQP1uxlaG6PAKNwDqkJ9VQqgHbawXXIcBQLgNmBIHqEDKROpcQahJi8KoVS6nI+1BjxJ2wGdsJCJpz+s6i8DFn57X+zBNe1H5PmQwi+gAAAABJRU5ErkJggg==");
+    public static readonly Bitmap Tool = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAABI0lEQVR4Xu2asQ6CMBCGwTgY3dycHFyNT8Ob+By+CU9jXBmc2Nw0TmoCHtEmDSf9haP5v4k00LT39ThomiYO9+vl6bZZZLZYpp/jmlgcZBem8pCYWG92XfrpHRmvmInGSDo2Ey7n4lg1RWOkyZFQJDK/gspJGvGhjXBXgz6iMcKJWINGrEEj1oBVdgFdH7REs7RgRqSia41ovwC0RGOEE7EGjViDRqxBI9aAVfY28vnWuQW7GLC9DcjfjLgG9qs6ZvIttk+we8w04kNMiAHhUD6qyzyRXMHGENvbgMBzJLud6umU328p5ogSuBHmSCBwI8yRQOBGJEcaM2+yInCkLbCO+HBN9AWN+EDvIGqJxkhzwmZsJyDkvya+syjuGuR5rYF5ARkpTj1OuIg2AAAAAElFTkSuQmCC");
+    public static readonly Bitmap Analysis = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAA/UlEQVR4Xu2asQoCMQyGrTgIbm5ODu6+nM/hy7k73OTmJjipIOTQYEnt5fQn/b/xaEvbL5fe0aSJ4no53/UzROaLZXqd1xRxkjXMpJOYWG+2NeP8HJmvmAljJKGa2J9uHy3vVu973x0Pz3ZhjHAhaNAIGv05MpTSLGMh4+jsZMHQQiOMEbd3JEdpzOt2cmJrct+CNKKzlJVlcllNsPpbtGPE63yQHbfM1NKOkVK+zTLe0EgtQ7NTjnaMjLWD3rRjxJuxslsYI1wIGub/yFgx7Q1DCw0aQYNG0KARNGgEDRpBI4wR2Hv2UsLds/cVNqgVEDnERLxaFL1i1mv9mQdWak2OpfNapgAAAABJRU5ErkJggg==");
+    public static readonly Bitmap MultiAxisRoughing = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAABRklEQVR4Xu2aMQ7CMAwAG9QBiY2NiYEV8Rp+wjv4Ca9h78DExobEBAiQK+piOXGNalm+kaom8cVxpCZViNv18sC/WWQ6m6fvcU0sDlJCDS+BieVqI4nTY3++/4yzW+jkDsYLZnSiGqDGJv6dSSl4XIdq/Q4F43djJCZijXbX0gbvTlTtaeFmafWMUPs8ZFSrD+TC/e+2+UTya4QCTHAZGgs3RpL0jFVq5tQcO7K4M11ufIjrxoi4j3A1wxmgnueawLgxIq4RDGeAQ/p+1Ii2CQDvYqWG3NSIeNfCQEZLM8kZziWMUJSudc4gfk4RRnIpNSQljAyFO/2W4sZITMQaYcQag89aWmcsgOv00dlzkXZwqQGMm2IfXCMUnCEwodXhw0gpWpl3v2u5WVoxEWu4MdLesJF+JxkL6EPu7qJ07jy9iPtaI/MEESWNZb92UNwAAAAASUVORK5CYII=");
+    public static readonly Bitmap RegionFinishing = Load("iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAABg0lEQVR4Xu2aO27CQBRFMUqBoEtHRZEWsRrvhHWwk6wmSkuRKl06EBUg27rg3OTpzc+/mTnlYIOZ4zvv+VPMiMvp58ZjY2Sxei3axzUf40G68IKdYGLztnP5nt7B8cJMNEaKqZlgvo4f9VA0Rh4ZCQVmCPSVuWwEsAE2IX0e2lg2gpnmDNhmJJSxdI0cvq/16b1Z/+4AeFwyxmirmqnhdIz8mREyAfbrbuYExrQsdfPrAyBWdu0cRya6MmFL/EY0xmICpGdEyoQ0zquNVi98Sc+IlImxZCU9I7ZolTg02Qijdan4/H25rXflbPl2CtmIZkC+7mjmzrSrNiU9I7YGNDgrWoY00jGiXZe4wqvWsxf7P0Ma0RgR/0g1Q+2OtTLjU62rOoFa0UYarzKEHJkQjRHr5yOhVy/bDkHaPhoj1s9HfO/1ck/F9UO6b6aRrhG5h2rQMlSeP+vtymOzPdcPV7IRCd8MuZKNmNL1/SwQjZHHGzZTewMCq2N876LwuZ7f1xqYO4rYqh9/jYdPAAAAAElFTkSuQmCC");
 
-    public static readonly Bitmap Core = DrawCore();
-    public static readonly Bitmap CutParameters = DrawCutParameters();
-    public static readonly Bitmap HorizontalRoughing = DrawRoughing();
-    public static readonly Bitmap ParallelFinishing = DrawFinishing();
-    public static readonly Bitmap MachineSetup = DrawMachine();
-    public static readonly Bitmap Stock = DrawStock();
-    public static readonly Bitmap Tool = DrawTool();
-    public static readonly Bitmap Analysis = DrawAnalysis();
-    public static readonly Bitmap MultiAxisRoughing = DrawMultiAxisRoughing();
-    public static readonly Bitmap RegionFinishing = DrawRegionFinishing();
-
-    private static Bitmap NewCanvas(out Graphics g)
+    private static Bitmap Load(string base64)
     {
-        var bitmap = new Bitmap(50, 50, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        g = Graphics.FromImage(bitmap);
-        g.Clear(Color.Transparent);
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-        return bitmap;
-    }
-
-    private static Pen Pen(Color color, float width = 2.6f)
-        => new(color, width) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
-
-    private static void Dot(Graphics g, float x, float y, float r, Color color)
-    { using var b = new SolidBrush(color); g.FillEllipse(b, x-r, y-r, 2*r, 2*r); }
-
-    private static void Line(Graphics g, Color color, float width, params PointF[] points)
-    { using var p = Pen(color, width); g.DrawLines(p, points); }
-
-    private static Bitmap DrawCore()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            using var ring=Pen(Cyan,3);g.DrawEllipse(ring,7,7,36,36);
-            using var inner=Pen(Ink,2.2f);g.DrawEllipse(inner,17,17,16,16);
-            using var core=new SolidBrush(Orange);g.FillEllipse(core,21,21,8,8);
-            Dot(g,25,7,2.5f,Ink);Dot(g,43,25,2.5f,Ink);Dot(g,25,43,2.5f,Ink);Dot(g,7,25,2.5f,Ink);
-            Line(g,Blue,2,new PointF(25,11),new PointF(25,17));Line(g,Blue,2,new PointF(39,25),new PointF(33,25));
-            Line(g,Blue,2,new PointF(25,39),new PointF(25,33));Line(g,Blue,2,new PointF(11,25),new PointF(17,25));
-        }return bitmap;
-    }
-
-    private static Bitmap DrawCutParameters()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            for(int i=0;i<3;i++)
-            {
-                float y=13+i*12;Line(g,Ink,2.2f,new PointF(7,y),new PointF(43,y));
-            }
-            Dot(g,17,13,4.2f,Cyan);Dot(g,32,25,4.2f,Orange);Dot(g,22,37,4.2f,Blue);
-            using var outline=Pen(Ink,1.5f);g.DrawEllipse(outline,12.5f,8.5f,9,9);g.DrawEllipse(outline,27.5f,20.5f,9,9);g.DrawEllipse(outline,17.5f,32.5f,9,9);
-        }return bitmap;
-    }
-
-    private static Bitmap DrawRoughing()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            using var a=Pen(Cyan,2.3f);g.DrawRectangle(a,7,7,36,36);
-            using var b=Pen(Blue,2.3f);g.DrawRectangle(b,13,13,24,24);
-            using var c=Pen(Orange,2.3f);g.DrawRectangle(c,19,19,12,12);
-            Line(g,Ink,2,new PointF(25,2),new PointF(25,8));Line(g,Ink,2,new PointF(22,5),new PointF(25,8),new PointF(28,5));
-        }return bitmap;
-    }
-
-    private static Bitmap DrawFinishing()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            using var p1=Pen(Cyan,2.4f);g.DrawBezier(p1,8,12,16,8,31,8,42,12);
-            using var p2=Pen(Blue,2.4f);g.DrawBezier(p2,8,22,16,18,31,18,42,22);
-            using var p3=Pen(Orange,2.4f);g.DrawBezier(p3,8,32,16,28,31,28,42,32);
-            using var p4=Pen(Ink,2.4f);g.DrawBezier(p4,8,42,16,38,31,38,42,42);
-        }return bitmap;
-    }
-
-    private static Bitmap DrawMachine()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            Line(g,Orange,3,new PointF(25,40),new PointF(25,9));Line(g,Cyan,3,new PointF(25,40),new PointF(42,40));
-            Line(g,Blue,3,new PointF(25,40),new PointF(11,28));
-            Line(g,Orange,2,new PointF(21,14),new PointF(25,8),new PointF(29,14));
-            Line(g,Cyan,2,new PointF(36,36),new PointF(43,40),new PointF(36,44));
-            Line(g,Blue,2,new PointF(16,32),new PointF(10,27),new PointF(17,26));Dot(g,25,40,3,Ink);
-        }return bitmap;
-    }
-
-    private static Bitmap DrawStock()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            Line(g,Ink,2.5f,new PointF(25,6),new PointF(43,15),new PointF(43,36),new PointF(25,45),new PointF(7,36),new PointF(7,15),new PointF(25,6));
-            Line(g,Cyan,2.5f,new PointF(7,15),new PointF(25,24),new PointF(43,15));
-            Line(g,Blue,2.5f,new PointF(25,24),new PointF(25,45));
-            Line(g,Orange,2.2f,new PointF(16,11),new PointF(34,20),new PointF(34,33));
-        }return bitmap;
-    }
-
-    private static Bitmap DrawTool()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            using var body=Pen(Ink,3);g.DrawRectangle(body,18,5,14,23);
-            using var tip=Pen(Cyan,3);g.DrawLine(tip,18,28,18,39);g.DrawLine(tip,32,28,32,39);g.DrawLine(tip,18,39,23,44);g.DrawLine(tip,32,39,27,44);g.DrawLine(tip,23,44,27,44);
-            Line(g,Orange,2.2f,new PointF(20,29),new PointF(30,18));Line(g,Blue,2.2f,new PointF(20,39),new PointF(30,29));
-            Line(g,Ink,2,new PointF(22,5),new PointF(22,2));Line(g,Ink,2,new PointF(28,5),new PointF(28,2));Line(g,Ink,2,new PointF(22,2),new PointF(28,2));
-        }return bitmap;
-    }
-
-    private static Bitmap DrawAnalysis()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            using var axes=Pen(Ink,2);g.DrawLine(axes,8,41,8,9);g.DrawLine(axes,8,41,43,41);
-            Line(g,Cyan,2.4f,new PointF(11,34),new PointF(19,27),new PointF(26,30),new PointF(37,14));
-            Dot(g,11,34,2.8f,Blue);Dot(g,19,27,2.8f,Blue);Dot(g,26,30,2.8f,Orange);Dot(g,37,14,2.8f,Cyan);
-            using var ring=Pen(Orange,1.8f);g.DrawEllipse(ring,29,7,13,13);
-        }return bitmap;
-    }
-
-    private static Bitmap DrawMultiAxisRoughing()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            using var block=Pen(Ink,2.2f);g.DrawRectangle(block,14,14,22,22);
-            using var inner=Pen(Blue,2f);g.DrawEllipse(inner,19,19,12,12);
-            // Three tool axes approaching from the top, the left and a diagonal.
-            Line(g,Cyan,2.6f,new PointF(25,3),new PointF(25,12));Line(g,Cyan,2f,new PointF(22,9),new PointF(25,12),new PointF(28,9));
-            Line(g,Orange,2.6f,new PointF(3,25),new PointF(12,25));Line(g,Orange,2f,new PointF(9,22),new PointF(12,25),new PointF(9,28));
-            Line(g,Blue,2.6f,new PointF(46,4),new PointF(38,12));Line(g,Blue,2f,new PointF(38,8),new PointF(38,12),new PointF(42,12));
-        }return bitmap;
-    }
-
-    private static Bitmap DrawRegionFinishing()
-    {
-        var bitmap=NewCanvas(out var g);using(g)
-        {
-            using var outline=Pen(Ink,2.2f);g.DrawEllipse(outline,7,7,36,36);
-            using var p1=Pen(Cyan,2.2f);g.DrawBezier(p1,10,18,18,14,30,14,40,18);g.DrawBezier(p1,9,24,18,20,30,20,41,24);
-            using var p2=Pen(Orange,2.2f);g.DrawLine(p2,15,30,15,40);g.DrawLine(p2,21,30,21,42);g.DrawLine(p2,27,30,27,42);g.DrawLine(p2,33,30,33,40);
-            Line(g,Blue,2f,new PointF(7,28),new PointF(43,28));
-        }return bitmap;
+        using var ms = new System.IO.MemoryStream(Convert.FromBase64String(base64));
+        using var img = new Bitmap(ms);
+        return new Bitmap(img);   // detach from the stream
     }
 }

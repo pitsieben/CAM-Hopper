@@ -41,6 +41,10 @@ components are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## Grasshopper components
 
+![Component icons](docs/images/icons.png)
+
+Icons, left to right: CAM Core, Cut Parameters, Stock, Machine Setup, Tool / Horizontal Roughing, Parallel Finishing, Multi-Axis Roughing, Region Finishing, CAM Analysis. The 50x50 PNG sources are in `docs/images/icons`.
+
 | Component | Inputs | Outputs |
 |---|---|---|
 | **Tool** | Diameter, shape (`Flat` / `Ball`), flute count (default 2), RPM | Tool metadata, cutting speed, summary |
