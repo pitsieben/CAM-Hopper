@@ -31,12 +31,18 @@ public sealed class RoughingContext
 /// </summary>
 public static class HorizontalRoughPlanner
 {
+    [ThreadStatic] private static double _maxLink;
+    private static bool Near(Point3 a, Point3 b) => _maxLink <= 0 || Math.Sqrt(Distance2(a, b)) <= _maxLink;
+    private static bool ShortRoute(List<Point3>? route) { if (route is null) return false; double L = 0; for (int i = 0; i + 1 < route.Count; i++) L += Math.Sqrt(Distance2(route[i], route[i + 1])); return _maxLink <= 0 || L <= _maxLink * 1.5; }
     public static HorizontalRoughResult Generate(HorizontalRoughRequest r) => Generate(r, null);
 
     public static HorizontalRoughResult Generate(HorizontalRoughRequest r, RoughingContext? ctx)
     {
         if (r.ToolRadius <= 0 || r.Stepdown <= 0 || r.Stepover <= 0 || r.StockToLeave < 0) throw new ArgumentOutOfRangeException(nameof(r.ToolRadius), "Tool radius, stepdown and stepover must be positive; stock-to-leave cannot be negative.");
         var s = r.Stock;
+        // Links that stay down are only allowed over a short distance (about one tool diameter); farther
+        // jumps would be long straight slotting moves across the pocket, so they retract instead.
+        _maxLink = Math.Max(2.5 * r.Stepover, 2.2 * r.ToolRadius);
         if (s.MaxX <= s.MinX || s.MaxY <= s.MinY || s.MaxZ <= s.MinZ) throw new ArgumentException("Stock bounds must have positive dimensions.");
         if (r.Mesh.Vertices.Length < 3 || r.Mesh.Faces.Length == 0) throw new ArgumentException("A triangulated target surface is required.");
         double h = r.GridResolution > 0 ? r.GridResolution : Math.Max(0.05, Math.Min(0.2, Math.Min(r.Stepover * 0.2, r.ToolRadius * 0.1)));
@@ -129,8 +135,9 @@ public static class HorizontalRoughPlanner
                 :new List<List<Point3>>();
             bool vectorLayer=layer.Count>0;
             if(!vectorLayer&&!useMeshOffsets)layer=CollapseTinyLoops(GeneratePattern(active,nx,ny,s,h,z,laneStride,r.Pattern,r.ToolRadius),r.ToolRadius);
+            if(vectorLayer)layer=CollapseTinyLoops(layer,r.ToolRadius).Where(p=>p.Count>3).ToList();
             layer=vectorLayer?LinkVectorPaths(layer,legal,s,h,z):LinkPaths(layer,legal,s,h,z);
-            if(!vectorLayer)layer=SmoothPathsWithinSafeArea(layer,legal,s,h);
+            if(!vectorLayer)layer=CollapseTinyLoops(SmoothPathsWithinSafeArea(layer,legal,s,h),r.ToolRadius);
             List<Point3> transition=new();bool canLinkDown=false;
             if(paths.Count>0&&paths[^1].Count>0&&layer.Count>0)
                 canLinkDown=vectorLayer
@@ -201,9 +208,9 @@ public static class HorizontalRoughPlanner
         var current=cuts[0].ToList();
         for(int k=1;k<cuts.Count;k++)
         {
-            var next=cuts[k];var route=FindSafeRoute(current[^1],next[0],legal,stock,h,z);
-            if(route is null){if(current.Count>=2)output.Add(current);current=next.ToList();continue;}
-            current.AddRange(route.Skip(1));current.AddRange(next.Skip(1));
+            var next=cuts[k];var route=Near(current[^1],next[0])?FindSafeRoute(current[^1],next[0],legal,stock,h,z):null;
+            if(!ShortRoute(route)){if(current.Count>=2)output.Add(current);current=next.ToList();continue;}
+            current.AddRange(route!.Skip(1));current.AddRange(next.Skip(1));
         }
         if(current.Count>=2)output.Add(current);return output;
     }
@@ -235,7 +242,7 @@ public static class HorizontalRoughPlanner
                 for(int j=0;j<n;j++){double d=Dist2(current[^1],next[j]);if(d<best){best=d;start=j;}}
             }
             var rotated=RotateClosed(next,start);
-            if(SegmentSafe(current[^1],rotated[0],legal,stock,h))current.AddRange(rotated);
+            if(Near(current[^1],rotated[0])&&SegmentSafe(current[^1],rotated[0],legal,stock,h))current.AddRange(rotated);
             else
             {
                 if(current.Count>=2)output.Add(current);
@@ -258,7 +265,7 @@ public static class HorizontalRoughPlanner
     private static bool TryLinkDownDirect(Point3 previousEnd,List<Point3> nextPath,bool[,] legal,StockBounds stock,double h,double z,out List<Point3> transition)
     {
         var lower=new Point3(previousEnd.X,previousEnd.Y,z);transition=new List<Point3>();
-        if(nextPath.Count<2||!IsSafePoint(lower,legal,stock,h)||!IsSegmentSafe(lower,nextPath[0],legal,stock,h))return false;
+        if(nextPath.Count<2||!Near(lower,nextPath[0])||!IsSafePoint(lower,legal,stock,h)||!IsSegmentSafe(lower,nextPath[0],legal,stock,h))return false;
         transition.Add(previousEnd);transition.Add(lower);
         if(Distance2(lower,nextPath[0])>1e-12)transition.Add(nextPath[0]);
         transition.AddRange(nextPath.Skip(1));return true;
@@ -336,8 +343,8 @@ public static class HorizontalRoughPlanner
     {
         var lower=new Point3(previousEnd.X,previousEnd.Y,z);
         transition=new List<Point3>();if(!IsSafePoint(lower,legal,stock,h))return false;
-        var route=FindSafeRoute(lower,nextPath[0],legal,stock,h,z);if(route is null)return false;
-        transition.Add(previousEnd);transition.AddRange(route);transition.AddRange(nextPath.Skip(1));return true;
+        if(!Near(lower,nextPath[0]))return false;var route=FindSafeRoute(lower,nextPath[0],legal,stock,h,z);if(!ShortRoute(route))return false;
+        transition.Add(previousEnd);transition.AddRange(route!);transition.AddRange(nextPath.Skip(1));return true;
     }
 
     private static List<Point3>? FindSafeRoute(Point3 start,Point3 end,bool[,] legal,StockBounds stock,double h,double z)

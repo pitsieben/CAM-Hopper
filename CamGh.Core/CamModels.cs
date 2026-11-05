@@ -67,7 +67,7 @@ public sealed record MultiAxisRoughingCommand(
     double? FixtureZ = null,
     double GridResolution = 0,
     double StockResolution = 0,
-    RoughingStrategy Strategy = RoughingStrategy.SurfaceOffset)
+    RoughingStrategy Strategy = RoughingStrategy.ZLevel)
     : CamCommand(Name, Mesh, Tool, Parameters);
 
 /// <summary>
@@ -76,7 +76,7 @@ public sealed record MultiAxisRoughingCommand(
 /// so wherever a pass meets the part it follows that offset surface (computed by drop-cutter, as in finishing)
 /// and the last pass leaves a uniform shell. ZLevel: the original stock-aware Z-level engine with raster patterns.
 /// </summary>
-public enum RoughingStrategy { SurfaceOffset = 0, ZLevel = 1 }
+public enum RoughingStrategy { ZLevel = 0, SurfaceOffset = 1 }
 
 /// <summary>
 /// F1: region-based 3+2 finishing. Patches come from accessibility-constrained k-means on face normals and position
@@ -172,18 +172,17 @@ public static class CamJobPlanner
             {
                 case HorizontalRoughingCommand rough:
                 {
-                    var result = HorizontalRoughPlanner.Generate(new HorizontalRoughRequest(
-                        rough.Mesh, job.Stock.Bounds, rough.Tool.Radius,
-                        rough.Tool.Diameter * rough.Parameters.StepdownPercent / 100.0,
-                        rough.Tool.Diameter * rough.Parameters.StepoverPercent / 100.0,
-                        rough.Parameters.StockToLeave, rough.GridResolution, rough.Parameters.Pattern, rough.Tool.Shape));
-                    UpdateStock(stock, result.Paths, new Vec3(0, 0, 1), rough);
-                    var retractNote = rough.Parameters.Retract == RetractMove.StayDown
-                        ? "Safe links stay down through legal cutter-center space; retracts are used only between disconnected regions."
-                        : $"Safe links stay down where possible; {rough.Parameters.Retract} retracts are used where regions cannot be legally linked.";
-                    var note = $"{result.Method} Generated {result.ZLevels} Z-level(s) and {result.Paths.Count} cutting path(s). {retractNote} Engage mode is not yet applied.";
-                    operations.Add(new OperationResult(rough.Name, "Horizontal Roughing", result.Paths, result.Quality, note,
-                        rough.Tool.Rpm, rough.Tool.CuttingSpeedMetresPerMinute, Enumerable.Repeat(ZAxis, result.Paths.Count).ToList()));
+                    // Horizontal roughing runs on the same part-following engine as multi-axis roughing, with the
+                    // tool fixed vertical: depth of cut = stepdown, but levels follow the part finely, so a large
+                    // stepdown no longer leaves terraces. (The classic fixed-layer planner remains in HorizontalRoughPlanner.)
+                    var vertical = new MultiAxisRoughingCommand(rough.Name, rough.Mesh, rough.Tool, rough.Parameters,
+                        new List<Point3> { new(0, 0, 1) }, 1, 0, null, rough.GridResolution, 0, RoughingStrategy.ZLevel);
+                    var result = MultiAxisRoughPlanner.Generate(vertical, stock);
+                    var paths = result.Groups.SelectMany(g => g.Paths).ToList();
+                    var note = $"Part-following horizontal roughing (fixed Z axis). Stock {result.StartVolume / 1000:0.#} → {result.EndVolume / 1000:0.#} cm³. "
+                        + string.Join(" ", result.Groups.Select(g => g.Note)) + " Passes stay engaged between neighbouring rings; retracts only where regions cannot be linked.";
+                    operations.Add(new OperationResult(rough.Name, "Horizontal Roughing", paths, Measure(paths), note,
+                        rough.Tool.Rpm, rough.Tool.CuttingSpeedMetresPerMinute, Enumerable.Repeat(ZAxis, paths.Count).ToList()));
                     break;
                 }
                 case ParallelFinishingCommand finish:
@@ -248,7 +247,7 @@ public static class CamJobPlanner
                 var w = Vec3.From(axis).Normalized();
                 // Vertical work keeps the absolute clearance plane; other axes clear the stock box by the offset.
                 double clearW = w.Z > 0.999999 ? clearance : Frame.Corners(b).Max(c => c.Dot(w)) + offset;
-                var motion = BuildClearanceMotion(op.Paths.GetRange(start, end - start), w, clearW, parameters.Retract);
+                var motion = BuildClearanceMotion(op.Paths.GetRange(start, end - start), w, clearW, parameters.Retract, job.Commands[i]);
                 if (motion.Count > 0) { motions.Add(motion); motionAxes.Add(w.ToPoint()); motionOps.Add(i); }
                 start = end;
             }
@@ -299,10 +298,18 @@ public static class CamJobPlanner
         return result;
     }
 
-    private static List<Point3> BuildClearanceMotion(List<List<Point3>> cuts, Vec3 axis, double clearanceW, RetractMove retract)
+    private static List<Point3> BuildClearanceMotion(List<List<Point3>> cuts, Vec3 axis, double clearanceW, RetractMove retract, CamCommand? command = null)
     {
         Point3 Lift(Point3 p) { var v = Vec3.From(p); return (v + axis * (clearanceW - v.Dot(axis))).ToPoint(); }
-        var motion = new List<Point3>();
+        // Finishing passes stay engaged between neighbouring lanes: order them as a zigzag and link them along the part.
+        SurfaceLinker? linker = null;
+        if (command is ParallelFinishingCommand or RegionFinishingCommand)
+        {
+            cuts = SurfaceLinker.OrderZigzag(cuts);
+            double leave = command is RegionFinishingCommand ? command.Parameters.StockToLeave : 0;
+            try { linker = new SurfaceLinker(command.Mesh, axis, command.Tool, leave); } catch { linker = null; }
+        }
+        var motion = new List<Point3>(); Point3? lastLift = null;
         foreach (var cut in cuts.Where(p => p.Count >= 2))
         {
             var start = cut[0]; var end = cut[^1];
@@ -313,15 +320,20 @@ public static class CamJobPlanner
             }
             else
             {
-                var previous = motion[^1];
-                motion.Add(Lift(previous));
-                motion.Add(Lift(start));
-                motion.Add(start);
+                var link = linker?.Link(motion[^1], start);
+                if (link is not null) { motion.AddRange(link); motion.Add(start); }
+                else
+                {
+                    motion.Add(lastLift ?? Lift(motion[^1]));
+                    motion.Add(Lift(start));
+                    motion.Add(start);
+                }
             }
             motion.AddRange(cut.Skip(1));
             var retractFrom = cut.Count > 1 ? cut[^2] : end;
-            motion.Add(retract == RetractMove.Ramp && cut.Count > 1 ? Lift(retractFrom) : Lift(end));
+            lastLift = retract == RetractMove.Ramp && cut.Count > 1 ? Lift(retractFrom) : Lift(end);
         }
+        if (lastLift is not null) motion.Add(lastLift);
         return motion;
     }
 

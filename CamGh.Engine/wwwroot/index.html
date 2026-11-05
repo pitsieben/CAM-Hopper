@@ -452,13 +452,17 @@ function draw() {
   const e = eye(), vp = M.mul(M.persp(0.7, canvas.width / Math.max(1, canvas.height), cam.dist / 500, cam.dist * 20), M.look(e, cam.target, [0, 0, 1]));
   gl.enable(gl.DEPTH_TEST); gl.depthFunc(gl.LEQUAL);
   const drawMesh = (g, color, model) => { if (!g) return; gl.useProgram(meshProg); gl.uniformMatrix4fv(gl.getUniformLocation(meshProg, "uVP"), false, vp); gl.uniformMatrix4fv(gl.getUniformLocation(meshProg, "uModel"), false, model || M.id()); gl.uniform4fv(gl.getUniformLocation(meshProg, "uColor"), color); gl.uniform3fv(gl.getUniformLocation(meshProg, "uEye"), e); gl.bindVertexArray(g.vao); gl.drawElements(gl.TRIANGLES, g.count, gl.UNSIGNED_INT, 0); };
-  const drawLines = (g, color) => { if (!g || !g.count) return; gl.useProgram(lineProg); gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, "uVP"), false, vp); gl.uniform4fv(gl.getUniformLocation(lineProg, "uColor"), color); gl.bindVertexArray(g.vao); gl.drawArrays(gl.LINES, 0, g.count); };
+  const drawLines = (g, color, n) => { if (!g || !g.count) return; gl.useProgram(lineProg); gl.uniformMatrix4fv(gl.getUniformLocation(lineProg, "uVP"), false, vp); gl.uniform4fv(gl.getUniformLocation(lineProg, "uColor"), color); gl.bindVertexArray(g.vao); gl.drawArrays(gl.LINES, 0, n === undefined ? g.count : Math.min(g.count, n)); };
   // opaque
   if ($("lPart").checked) drawMesh(gpu.part, hex("#d9dee8"));
   if ($("lBox").checked) drawLines(gpu.box, hex("#8b95a9", 0.9));
   scene.operations.forEach((_, i) => { const cb = $("lOp" + i); if (cb && cb.checked) drawLines(gpu.ops[i], hex(OP_COLORS[i % OP_COLORS.length])); });
   if ($("lLinks").checked) drawLines(gpu.links, hex("#5b6b88", 0.6));
   const sim = simState();
+  if (sim && timeline && gpu.links) {   // bright trail = everything the tool has travelled so far
+    const k = sim.index - timeline.starts[sim.motion];
+    drawLines(gpu.links, hex("#ffe9a8"), 2 * (timeline.segBase[sim.motion] + k));
+  }
   if (sim) {
     const t = scene.operations[sim.op].tool, key = JSON.stringify(t);
     if (gpu.toolKey !== key) { gpu.tool = toolGpu(t); gpu.toolKey = key; }
@@ -544,7 +548,8 @@ function buildTimeline() {
   for (let i = 0; i < m.counts.length; i++) for (let k = 0; k < m.counts[i]; k++) {
     const p = starts[i] + k; if (k > 0) { const a = (p - 1) * 3, b = p * 3; acc += Math.hypot(m.pts[b] - m.pts[a], m.pts[b + 1] - m.pts[a + 1], m.pts[b + 2] - m.pts[a + 2]); } cum[p] = acc;
   }
-  timeline = { starts, total: base, cum, length: acc };
+  const segBase = []; let sb = 0; m.counts.forEach(c => { segBase.push(sb); sb += Math.max(0, c - 1); });
+  timeline = { starts, total: base, cum, length: acc, segBase };
   $("scrub").max = String(Math.max(0, base - 1)); $("scrub").value = "0"; cursor = 0; updateHud();
 }
 function motionAt(p) { const st = timeline.starts; let lo = 0, hi = st.length - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (st[mid] <= p) lo = mid; else hi = mid - 1; } return lo; }
@@ -559,16 +564,17 @@ function updateHud() {
   $("hudText").innerHTML = `${esc(o.name)}<br>X ${s.p[0].toFixed(1)}  Y ${s.p[1].toFixed(1)}  Z ${s.p[2].toFixed(1)}<br>axis ${s.axis.map(v => v.toFixed(2)).join(", ")}<br>${(timeline.cum[s.index] / 1000).toFixed(2)} / ${(timeline.length / 1000).toFixed(2)} m`;
   if ($("follow").checked) { if (scene.framesReady && scene.frames?.length) setStockFrame(frameAt(s.index)); else setStockSnapshot(s.op); }
 }
-$("scrub").oninput = () => { cursor = +$("scrub").value; updateHud(); requestDraw(); };
-$("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; lastT = performance.now(); if (playing) requestAnimationFrame(tick); };
-$("restart").onclick = () => { cursor = 0; $("scrub").value = "0"; updateHud(); requestDraw(); };
+$("scrub").oninput = () => { cursor = +$("scrub").value; playDist = timeline ? timeline.cum[cursor] : 0; updateHud(); requestDraw(); };
+$("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; lastT = performance.now(); if (playing) { if (timeline && cursor >= timeline.total - 1) { cursor = 0; playDist = 0; } else if (timeline) playDist = timeline.cum[Math.floor(cursor)]; requestAnimationFrame(tick); } };
+$("restart").onclick = () => { cursor = 0; playDist = 0; $("scrub").value = "0"; updateHud(); requestDraw(); };
 $("follow").onchange = () => { if ($("follow").checked) updateHud(); };
+let playDist = 0;   // distance travelled along the toolpath (mm); kept as a float so slow playback still advances
 function tick(now) {
   if (!playing || !timeline) return;
-  const dt = (now - lastT) / 1000; lastT = now;
+  const dt = Math.min(0.25, (now - lastT) / 1000); lastT = now;
   const mmPerSecond = timeline.length / parseFloat($("speed").value);   // the select sets the whole job's play time
-  const target = timeline.cum[Math.floor(cursor)] + dt * mmPerSecond;
-  let p = Math.floor(cursor); while (p < timeline.total - 1 && timeline.cum[p + 1] <= target) p++;
+  playDist += dt * mmPerSecond;
+  let p = Math.floor(cursor); while (p < timeline.total - 1 && timeline.cum[p + 1] <= playDist) p++;
   cursor = p;
   if (p >= timeline.total - 1) { playing = false; $("play").textContent = "Play"; if ($("follow").checked) { if (scene.framesReady && scene.frames?.length) setStockFrame(scene.frames.length - 1); else setStockSnapshot(scene.snapshotVolumes.length - 1); } }
   $("scrub").value = String(p); updateHud(); requestDraw();

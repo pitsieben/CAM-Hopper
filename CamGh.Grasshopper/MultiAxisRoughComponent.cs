@@ -23,7 +23,7 @@ public sealed class MultiAxisRoughComponent : GH_Component
         p.AddNumberParameter("Fixture Z", "F", "World Z of the clamping base/table; no tool part goes below it and material below it is kept. Empty = stock bottom.", GH_ParamAccess.item);
         p.AddNumberParameter("Grid Resolution", "G", "Layer height-field pitch in each tool frame; 0 = automatic", GH_ParamAccess.item, 0.0);
         p.AddNumberParameter("Stock Resolution", "S", "Tri-dexel ray spacing of the 3D stock model; 0 = automatic", GH_ParamAccess.item, 0.0);
-        p.AddIntegerParameter("Strategy", "St", "0 = surface offset (levels follow the part offset by the stock to leave, ending in a uniform shell); 1 = Z-level contours", GH_ParamAccess.item, 0);
+        p.AddIntegerParameter("Strategy", "St", "0 = Z-level offset pocketing (flat levels, concentric rings, like RhinoCAM Horizontal Roughing); 1 = surface offset (passes follow the part offset by the stock to leave)", GH_ParamAccess.item, 0);
         p[3].Optional = true; p[6].Optional = true; p[9].Optional = true;
     }
     protected override void RegisterOutputParams(GH_OutputParamManager p)
@@ -38,7 +38,7 @@ public sealed class MultiAxisRoughComponent : GH_Component
         var dirs = new List<Vector3d>(); da.GetDataList(3, dirs);
         da.GetData(4, ref maxCount); da.GetData(5, ref reach); da.GetData(6, ref fixture); da.GetData(7, ref grid); da.GetData(8, ref stockRes); da.GetData(9, ref strategy);
         if (maxCount < 1 || reach < 0 || grid < 0 || stockRes < 0) { AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Max Orientations must be ≥ 1; reach and resolutions cannot be negative."); return; }
-        if (strategy is < 0 or > 1) { AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Strategy must be 0 (surface offset) or 1 (Z-level)."); return; }
+        if (strategy is < 0 or > 1) { AddRuntimeMessage(GH_RuntimeMessageLevel.Error, "Strategy must be 0 (Z-level) or 1 (surface offset)."); return; }
         int triangles = mesh.Faces.TriangleCount + 2 * mesh.Faces.QuadCount;
         if (triangles < 20000)
             AddRuntimeMessage(GH_RuntimeMessageLevel.Remark, $"The part mesh has {triangles:N0} triangles. Toolpaths follow its facets, so a coarse mesh shows up as kinks in the paths; for a sculpted part, 30,000+ triangles is a good target.");
