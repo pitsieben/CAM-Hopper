@@ -129,6 +129,10 @@ public static class HorizontalRoughPlanner
                 }
             }
             var active=new bool[nx,ny];for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)active[i,j]=legal[i,j]&&needsCut[i,j];
+            // The remaining-stock map carries the staircase of the previous level's cut and of the stock grid. Rings built on
+            // that edge would copy it, so round the region off first (slightly dilating: cutting a little air is harmless,
+            // leaving a ragged wall is not). Specks of one or two cells vanish; finishing removes them.
+            if(ctx?.RasterPatternsOnly==true)active=SmoothMask(active,legal,nx,ny);
             bool useMeshOffsets=r.Pattern==CutPattern.Offset&&r.ToolShape==ToolShape.Flat&&ctx?.RasterPatternsOnly!=true;
             var layer=useMeshOffsets
                 ?GenerateMeshOffsetPattern(r.Mesh,active,legal,s,h,z,r.ToolRadius,r.StockToLeave,r.Stepover)
@@ -488,10 +492,15 @@ public static class HorizontalRoughPlanner
         const double scale=1_000_000;
         var paths=new List<List<Point3>>();var sourcePaths=new Paths64();double maxOffset=Math.Sqrt(Math.Pow(stock.MaxX-stock.MinX,2)+Math.Pow(stock.MaxY-stock.MinY,2));
         double firstOffset=toolRadius+stockToLeave+2*h;int passLimit=Math.Min(100_000,(int)Math.Ceiling(maxOffset/stepover)+1);
+        double smoothMargin=0;
         foreach(var contour in contours)
         {
             double curveTolerance=Math.Max(1e-5,Math.Min(h*.25,Math.Min(stepover*.02,toolRadius*.01)));
             var fitted=FitMeshSectionContour(contour,z,curveTolerance);
+            // The slice through a triangle mesh is faceted at the triangle scale and every offset copies that noise.
+            // Smooth the slice first (bounded deviation, compensated in the first offset) so the rings come out clean.
+            fitted=SmoothContour(fitted,Math.Clamp(toolRadius*.15,.8,2.5),Math.Max(.1,Math.Min(.5,toolRadius*.03)),out double smoothDev);
+            smoothMargin=Math.Max(smoothMargin,smoothDev);
             var sourcePath=new Path64();
             foreach(var p in fitted)
             {
@@ -506,6 +515,7 @@ public static class HorizontalRoughPlanner
             sourcePaths.Add(sourcePath);
         }
         if(sourcePaths.Count==0)return StockInsetPaths(active,legal,stock,h,z,toolRadius,stepover);
+        firstOffset+=smoothMargin;
         int inactivePasses=0;
         for(int pass=0;pass<passLimit;pass++)
         {
@@ -545,6 +555,50 @@ public static class HorizontalRoughPlanner
             else if(++inactivePasses>=2)break;
         }
         return paths.Count>0?paths:StockInsetPaths(active,legal,stock,h,z,toolRadius,stepover);
+    }
+
+    /// <summary>Gaussian smoothing of a section polyline (resampled uniformly). Returns the input when it is too short or
+    /// would move more than maxDeviation; deviation is the largest distance from the smoothed curve to the original.</summary>
+    private static List<Point3> SmoothContour(List<Point3> pts,double sigma,double maxDeviation,out double deviation)
+    {
+        deviation=0;
+        if(pts.Count<8)return pts;
+        bool closed=Distance2(pts[0],pts[^1])<1e-8;
+        if(!closed)return pts;                       // open (stock-clipped) slices keep their exact shape
+        for(int attempt=0;attempt<3;attempt++,sigma*=.5)
+        {
+            double step=Math.Max(.1,sigma/3);
+            double total=0;var cum=new double[pts.Count];
+            for(int i=1;i<pts.Count;i++){total+=Math.Sqrt(Distance2(pts[i-1],pts[i]));cum[i]=total;}
+            int n=(int)Math.Round(total/step);if(n<24)return pts;
+            double ds=total/n;var res=new double[n,2];int seg=0;
+            for(int k=0;k<n;k++)
+            {
+                double t=k*ds;while(seg+2<pts.Count&&cum[seg+1]<t)seg++;
+                double len=cum[seg+1]-cum[seg];double u=len<1e-12?0:(t-cum[seg])/len;
+                res[k,0]=pts[seg].X+(pts[seg+1].X-pts[seg].X)*u;res[k,1]=pts[seg].Y+(pts[seg+1].Y-pts[seg].Y)*u;
+            }
+            int half=(int)Math.Ceiling(3*sigma/ds);var w=new double[2*half+1];double wsum=0;
+            for(int j=-half;j<=half;j++){w[j+half]=Math.Exp(-.5*(j*ds/sigma)*(j*ds/sigma));wsum+=w[j+half];}
+            var outPts=new List<Point3>(n+1);double z=pts[0].Z;
+            for(int k=0;k<n;k++)
+            {
+                double x=0,y=0;
+                for(int j=-half;j<=half;j++){int q=((k+j)%n+n)%n;x+=w[j+half]*res[q,0];y+=w[j+half]*res[q,1];}
+                outPts.Add(new Point3(x/wsum,y/wsum,z));
+            }
+            outPts.Add(outPts[0]);
+            double dev=0;
+            for(int k=0;k<n&&dev<=maxDeviation;k++)
+            {
+                double best=double.PositiveInfinity;
+                // distance to the original polyline (windowed by arc length for speed)
+                for(int i=0;i+1<pts.Count;i++)best=Math.Min(best,PointSegmentDistance(outPts[k],pts[i],pts[i+1]));
+                dev=Math.Max(dev,best);
+            }
+            if(dev<=maxDeviation){deviation=dev;return outPts;}
+        }
+        return pts;
     }
 
     private static bool LowSideIsInside(MeshSectionContour contour)
@@ -832,20 +886,47 @@ public static class HorizontalRoughPlanner
         }
         points.Add(points[0]);return new MeshSectionContour(points,normals);
     }
+    /// <summary>Blurs the inward distance field (normalised over safe cells only) so its level sets are smooth sub-cell
+    /// curves instead of copying the staircase of the binary legality mask and the chamfer metric.</summary>
+    private static double[,] SmoothDistance(double[,] d,bool[,] safe,int nx,int ny)
+    {
+        double[,] cur=d;
+        for(int pass=0;pass<3;pass++)
+        {
+            var tmp=new double[nx,ny];var dst=new double[nx,ny];
+            // [1 4 6 4 1]/16 along x then y, weights counted only for safe cells
+            double[] k={1,4,6,4,1};
+            for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)
+            {
+                if(!safe[i,j]){tmp[i,j]=0;continue;}
+                double sum=0,ws=0;for(int o=-2;o<=2;o++){int a=i+o;if(a<0||a>=nx||!safe[a,j])continue;sum+=k[o+2]*cur[a,j];ws+=k[o+2];}
+                tmp[i,j]=sum/ws;
+            }
+            for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)
+            {
+                if(!safe[i,j]){dst[i,j]=0;continue;}
+                double sum=0,ws=0;for(int o=-2;o<=2;o++){int b=j+o;if(b<0||b>=ny||!safe[i,b])continue;sum+=k[o+2]*tmp[i,b];ws+=k[o+2];}
+                dst[i,j]=sum/ws;
+            }
+            cur=dst;
+        }
+        return cur;
+    }
+
     private static List<List<Point3>> OffsetPasses(bool[,] safe,int nx,int ny,StockBounds s,double h,double z,int stride,bool join,double toolRadius)
     {
         // Generate genuine inward level sets on the source grid instead of shrinking a
         // stride-sized block mask (which made the pitch and shape depend on grid alignment).
         // The chamfer distance is a 8-neighbour approximation to Euclidean distance; its
         // threshold is the requested stepover, so local pass spacing is stable to about one cell.
-        double pitch=h*stride;var distance=DistanceToUnsafe(safe,nx,ny,h);double maxDistance=0;
+        double pitch=h*stride;var distance=SmoothDistance(DistanceToUnsafe(safe,nx,ny,h),safe,nx,ny);double maxDistance=0;
         for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)if(safe[i,j])maxDistance=Math.Max(maxDistance,distance[i,j]);
-        var paths=new List<List<Point3>>();double firstContour=h*.75;
+        var paths=new List<List<Point3>>();double firstContour=h*1.25;
         int passGuard=(int)Math.Ceiling(maxDistance/pitch)+1;
         for(int pass=0;pass<=passGuard;pass++)
         {
             double inset=firstContour+pass*pitch;if(inset>maxDistance)break;
-            paths.AddRange(Contours(distance,nx,ny,s,h,z,inset));
+            paths.AddRange(Contours(distance,nx,ny,s,h,z,inset).Select(c=>SmoothContour(c,2.5*h,.8*h,out _)));
         }
         // Offset rings can disappear before a small center island has a contour with enough
         // vertices to emit. Park et al. describe these residuals as corner, center, and neck
@@ -879,6 +960,22 @@ public static class HorizontalRoughPlanner
             else{linked.Add(current);current=next.ToList();}
         }
         linked.Add(current);return linked;
+    }
+
+    private static bool[,] SmoothMask(bool[,] mask,bool[,] legal,int nx,int ny)
+    {
+        var cur=new double[nx,ny];for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)cur[i,j]=mask[i,j]?1:0;
+        double[] k={1,4,6,4,1};
+        for(int pass=0;pass<2;pass++)
+        {
+            var tmp=new double[nx,ny];var dst=new double[nx,ny];
+            for(int i=0;i<nx;i++)for(int j=0;j<ny;j++){double sum=0;for(int o=-2;o<=2;o++){int a=Math.Clamp(i+o,0,nx-1);sum+=k[o+2]*cur[a,j];}tmp[i,j]=sum/16;}
+            for(int i=0;i<nx;i++)for(int j=0;j<ny;j++){double sum=0;for(int o=-2;o<=2;o++){int b=Math.Clamp(j+o,0,ny-1);sum+=k[o+2]*tmp[i,b];}dst[i,j]=sum/16;}
+            cur=dst;
+        }
+        var result=new bool[nx,ny];
+        for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)result[i,j]=legal[i,j]&&cur[i,j]>=.4;
+        return result;
     }
 
     private static double[,] DistanceToUnsafe(bool[,] safe,int nx,int ny,double h)

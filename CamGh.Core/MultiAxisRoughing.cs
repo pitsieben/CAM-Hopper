@@ -262,7 +262,7 @@ public static class MultiAxisRoughPlanner
         var request = new HorizontalRoughRequest(frame.Transform(cmd.Mesh), lb, r, stepdown, stepover, cmd.Parameters.StockToLeave, h, cmd.Parameters.Pattern, tool.Shape);
         var local = HorizontalRoughPlanner.Generate(request, ctx);
         // Points on straight runs carry no information; dropping them shrinks programs and robot files.
-        var world = local.Paths.Where(p => p.Count >= 2).Select(p => CamJobPlanner.Simplify(p.Select(frame.ToWorld).ToList(), 0.005)).ToList();
+        var world = local.Paths.Where(p => p.Count >= 2).Select(p => CamJobPlanner.Simplify(p.Select(frame.ToWorld).ToList(), 0.02)).ToList();
         double before = stock.Volume();
         foreach (var path in world) stock.SubtractPath(path, frame.W, tool.Shape, r, reach);
         double removed = Math.Max(0, before - stock.Volume());
