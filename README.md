@@ -13,8 +13,8 @@ This is a first vertical slice for a Rhino 8 / Grasshopper CAM plugin with a sep
 ## Quick start
 
 ```
-git clone https://github.com/pitsiebenaler112/CamGh.git
-cd CamGh
+git clone https://github.com/pitsieben/CAM-Hopper.git
+cd CAM-Hopper
 dotnet publish CamGh.Engine -p:PublishProfile=CamGhPackage
 Install-CamGh.bat
 ```
@@ -23,6 +23,15 @@ Close Rhino first: Grasshopper holds a file lock on a loaded `.gha`. The publish
 builds the Grasshopper plug-in and assembles `publish\package`; see [Build](#build) for what
 it does and how to run the same thing from Visual Studio. Licence: [MIT](LICENSE); bundled
 components are listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Dashboard overview](docs/images/dashboard_overview.png) **Dashboard overview**: per-operation tool, paths, cut length, removed volume. | ![Roughing simulation](docs/images/dashboard_sim_roughing.png) **Simulation**: 3+2 roughing paths, remaining stock and the tool moving on its own axis. |
+| ![Finishing simulation](docs/images/dashboard_sim_finishing.png) **Region finishing** playback. | ![Patch segmentation](docs/images/patch_segmentation.png) **Patch segmentation** of the part into reachable regions. |
+| ![Patch smoothing](docs/images/patch_smoothing.png) **Border smoothing** (curvature flow) gives smooth seams. | ![RhinoCAM comparison](docs/images/rhinocam_vs_camgh_z-40.png) **RhinoCAM reference vs CamGh** at one Z level (Z-level and surface-offset strategies). |
+| ![Roughing before/after](docs/images/roughing_before_after.png) Horizontal roughing before and after the rewrite. | ![Z-level smoothing](docs/images/zlevel_smooth_compare.png) Z-level offset rings before/after jiggle removal. |
 
 ## Projects
 
@@ -134,6 +143,20 @@ Per-operation results include total cut length, point count, average segment len
 3. **Machining-strip-width tensor**: implement per-contact tensor estimation, eigen-direction analysis, and region partitioning from Liu et al. This is the research route for adapting the preferred direction to curvature and cutter geometry rather than using a global raster direction.
 4. **Horizontal roughing**: refine the implemented height-field Minkowski envelope, then add in-process stock updates (adaptive height field or voxel/SDF), engagement limits, and safe linking/retracts. Current paths are stock-bounds-clipped candidates, not full stock simulation.
 5. **Machine-aware output**: add safe links, feed/plunge constraints, path simplification with bounded chord error, then controller-specific post processors. Benchmark using path length, segment statistics, and controlled cuts before estimating time or finish.
+
+## What changed since the first prototype
+
+1. **Prototype**: parallel raster finishing and a height-field horizontal roughing, running in a separate local engine process (loopback HTTP/JSON) with Grasshopper components.
+2. **Shared 3D stock**: a tri-dexel model (rays along X, Y, Z) replaced the height field for stock tracking, so undercuts and holes work. Every roughing and finishing operation is subtracted from it.
+3. **3+2 operations**: Multi-Axis Roughing (automatic or given tool directions) and Region Finishing (patch segmentation, curvature-flow border smoothing, drop-cutter lanes).
+4. **Engine dashboard**: embedded Settings window with overview tables and a WebGL simulation (tool playback, per-operation layers, stock after any operation). Falls back to Edge app mode or the default browser if the embedded view is unavailable.
+5. **Roughing strategies**: `ZLevel` (levels exactly one stepdown apart, confirmed against a RhinoCAM 3-axis reference) and `SurfaceOffset`. Horizontal Roughing now runs through the multi-axis planner with a single vertical direction.
+6. **Cleaner toolpaths**: Z-level offset rings are smoothed (Gaussian contour smoothing with a deviation bound, smoothed distance field and mask) to remove jiggle and artefacts.
+7. **Stay-down linking**: Parallel and Region finishing connect neighbouring passes along the surface (drop-cutter in the tool frame) and only retract when no safe link exists. Pass ordering uses a spatial grid instead of an O(n²) search.
+8. **Playback fix**: the play button now advances the timeline by path length and shows the exact removed material as a trail.
+9. **Speed**: cut removal runs in parallel with striped locks, rays that cannot touch the cutter are skipped, the tool body is clamped to the stock extent, and finishing paths are simplified before cutting. On a 2-core machine, Region finishing on the sculpture went from about 63 s to about 44 s, Parallel finishing from about 43 s to about 30 s and surface-offset roughing from 16-19 s to about 13 s. Setting `CAMGH_PROFILE=1` prints a timing breakdown. The remaining cost is the number of ray tests per tool move (a stock-height-aware test is the next step).
+
+Full details are in [IMPLEMENTATION_LOG.md](IMPLEMENTATION_LOG.md).
 
 ## Build
 

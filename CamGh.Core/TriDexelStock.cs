@@ -107,6 +107,7 @@ public sealed class TriDexelStock
         for (int i = 0; i <= n; i++) { var p = a + d * ((double)i / n); SubtractPlanar(p, p, w, shape, radius, length); }
     }
 
+    private static readonly object[] Stripes = Enumerable.Range(0, 8192).Select(_ => new object()).ToArray();
     private double _removedLength;   // accumulated by SubtractPlanar on ray family 0 while measuring
 
     /// <summary>Same as <see cref="SubtractSweep"/>, returning the volume (mm³) the move actually removed.</summary>
@@ -117,6 +118,12 @@ public sealed class TriDexelStock
         return _removedLength * _step[0][0] * _step[0][1];
     }
 
+    /// <summary>Subtracts many independent paths using all cores (order does not matter for the final stock).</summary>
+    public void SubtractPaths(IReadOnlyList<IReadOnlyList<Point3>> paths, IReadOnlyList<Vec3> axes, ToolShape shape, double radius, double length)
+    {
+        Parallel.For(0, paths.Count, i => SubtractPath(paths[i], axes.Count == 1 ? axes[0] : axes[i], shape, radius, length));
+    }
+
     public void SubtractPath(IReadOnlyList<Point3> path, Vec3 axis, ToolShape shape, double radius, double length)
     {
         if (path.Count == 1) { var p = Vec3.From(path[0]); SubtractSweep(p, p, axis, shape, radius, length); return; }
@@ -125,16 +132,21 @@ public sealed class TriDexelStock
 
     private void SubtractPlanar(Vec3 a, Vec3 b, Vec3 w, ToolShape shape, double r, double length)
     {
+        // Only the part of the tool body that can reach the stock matters: clamp its length to the stock's extent along the axis.
+        double maxProj = 0; for (int k = 0; k < 3; k++) maxProj += (w[k] >= 0 ? _max[k] : _min[k]) * w[k];
+        double reach = maxProj - a.Dot(w) + 1e-6;
+        if (reach <= 0) return;
+        if (reach < length) length = reach;
         var tf = Frame.FromAxis(w);
         var la = tf.ToLocal(a); var lb = tf.ToLocal(b);
         var cutter = new SweptCutter(tf, la.X, la.Y, lb.X, lb.Y, la.Z, r, length, shape, a + w * r, b + w * r);
         // World bounding box of the swept volume.
         var top = w * length;
-        double[] lo = new double[3], hi = new double[3];
+        Span<double> lo = stackalloc double[3], hi = stackalloc double[3];
         for (int k = 0; k < 3; k++)
         {
-            double[] vals = { a[k], b[k], a[k] + top[k], b[k] + top[k] };
-            lo[k] = vals.Min() - r; hi[k] = vals.Max() + r;
+            double a0 = a[k], b0 = b[k], t = top[k];
+            lo[k] = Math.Min(Math.Min(a0, b0), Math.Min(a0 + t, b0 + t)) - r; hi[k] = Math.Max(Math.Max(a0, b0), Math.Max(a0 + t, b0 + t)) + r;
         }
         for (int f = 0; f < 3; f++)
         {
@@ -149,12 +161,23 @@ public sealed class TriDexelStock
                 {
                     int idx = iu * nv + iv; var cur = rays[idx];
                     if (cur is null) continue;
+                    // Cheap rejection: the cutter's extent along this ray must overlap some remaining material interval.
+                    double lof = lo[f], hif = hi[f]; bool overlap = false;
+                    for (int k = 0; k < cur.Length; k += 2) if (cur[k + 1] >= lof && cur[k] <= hif) { overlap = true; break; }
+                    if (!overlap) continue;
                     var o = RayBase(f, iu, iv);
                     if (!cutter.Intersect(o, e, out double t0, out double t1)) continue;
                     if (t1 < cur[0] || t0 > cur[^1]) continue;
-                    var next = SubtractInterval(cur, t0, t1);
-                    if (f == 0) _removedLength += Span(cur) - (next is null ? 0 : Span(next));
-                    rays[idx] = next;
+                    // Rays are replaced, never edited in place, so a short striped lock makes concurrent subtraction safe
+                    // (removal commutes: the result is the union of everything swept, whatever the order).
+                    lock (Stripes[(idx * 3 + f) & (Stripes.Length - 1)])
+                    {
+                        cur = rays[idx];
+                        if (cur is null) continue;
+                        var next = SubtractInterval(cur, t0, t1);
+                        if (f == 0) _removedLength += Span(cur) - (next is null ? 0 : Span(next));
+                        rays[idx] = next;
+                    }
                 }
         }
     }
@@ -163,6 +186,16 @@ public sealed class TriDexelStock
 
     private static double[]? SubtractInterval(double[] cur, double t0, double t1)
     {
+        if (cur.Length == 2)
+        {
+            double l = cur[0], h = cur[1];
+            if (t1 <= l || t0 >= h) return cur;
+            bool left = t0 > l + 1e-9, right = t1 < h - 1e-9;
+            if (left && right) return new[] { l, t0, t1, h };
+            if (left) return new[] { l, t0 };
+            if (right) return new[] { t1, h };
+            return null;
+        }
         var res = new List<double>(cur.Length + 2);
         for (int k = 0; k < cur.Length; k += 2)
         {

@@ -48,24 +48,63 @@ internal sealed class SurfaceLinker
         return pts;
     }
 
-    /// <summary>Greedy nearest-end ordering that may reverse passes, so neighbouring lanes become a zigzag.</summary>
+    /// <summary>Greedy nearest-end ordering that may reverse passes, so neighbouring lanes become a zigzag.
+    /// Uses a uniform grid over the pass end points, so it stays fast with hundreds of thousands of passes.</summary>
     public static List<List<Point3>> OrderZigzag(List<List<Point3>> cuts)
     {
-        var rest = cuts.Where(p => p.Count >= 2).ToList();
-        if (rest.Count < 3) return rest;
-        var result = new List<List<Point3>> { rest[0] }; rest.RemoveAt(0);
-        double D2(Point3 a, Point3 b) => (a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y) + (a.Z - b.Z) * (a.Z - b.Z);
-        while (rest.Count > 0)
-        {
-            var tail = result[^1][^1]; int best = 0; bool rev = false; double bd = double.MaxValue;
-            for (int i = 0; i < rest.Count; i++)
+        var all = cuts.Where(p => p.Count >= 2).ToList();
+        int n = all.Count;
+        if (n < 3) return all;
+        double minX = double.MaxValue, minY = double.MaxValue, minZ = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue, maxZ = double.MinValue;
+        foreach (var p in all) foreach (var q in new[] { p[0], p[^1] })
+        { minX = Math.Min(minX, q.X); minY = Math.Min(minY, q.Y); minZ = Math.Min(minZ, q.Z); maxX = Math.Max(maxX, q.X); maxY = Math.Max(maxY, q.Y); maxZ = Math.Max(maxZ, q.Z); }
+        double vol = Math.Max(1e-6, (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1));
+        double cell = Math.Max(0.5, Math.Cbrt(vol / (2.0 * n)) * 2);
+        long Key(int ix, int iy, int iz) => ((long)ix & 0x1FFFFF) | (((long)iy & 0x1FFFFF) << 21) | (((long)iz & 0x1FFFFF) << 42);
+        int Ix(double v, double lo) => (int)Math.Floor((v - lo) / cell);
+        var grid = new Dictionary<long, List<int>>();
+        for (int i = 0; i < n; i++)
+            for (int e = 0; e < 2; e++)
             {
-                double ds = D2(tail, rest[i][0]), de = D2(tail, rest[i][^1]);
-                if (ds < bd) { bd = ds; best = i; rev = false; }
-                if (de < bd) { bd = de; best = i; rev = true; }
+                var q = e == 0 ? all[i][0] : all[i][^1];
+                long k = Key(Ix(q.X, minX), Ix(q.Y, minY), Ix(q.Z, minZ));
+                if (!grid.TryGetValue(k, out var l)) grid[k] = l = new List<int>();
+                l.Add(i * 2 + e);
             }
-            var next = rest[best]; rest.RemoveAt(best);
-            if (rev) { next = new List<Point3>(next); next.Reverse(); }
+        var used = new bool[n];
+        var result = new List<List<Point3>>(n);
+        int cur = 0; bool curRev = false; used[0] = true; result.Add(all[0]);
+        int usedCount = 1;
+        double D2(Point3 a, Point3 b) => (a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y) + (a.Z - b.Z) * (a.Z - b.Z);
+        while (usedCount < n)
+        {
+            var tail = result[^1][^1];
+            int cx = Ix(tail.X, minX), cy = Ix(tail.Y, minY), cz = Ix(tail.Z, minZ);
+            int bestId = -1; double bd = double.MaxValue;
+            for (int r = 0; r < 400; r++)
+            {
+                for (int dx = -r; dx <= r; dx++) for (int dy = -r; dy <= r; dy++) for (int dz = -r; dz <= r; dz++)
+                {
+                    if (Math.Max(Math.Abs(dx), Math.Max(Math.Abs(dy), Math.Abs(dz))) != r) continue;
+                    if (!grid.TryGetValue(Key(cx + dx, cy + dy, cz + dz), out var list)) continue;
+                    for (int li = list.Count - 1; li >= 0; li--)
+                    {
+                        int id = list[li], pi = id >> 1;
+                        if (used[pi]) { list[li] = list[^1]; list.RemoveAt(list.Count - 1); continue; }
+                        var q = (id & 1) == 0 ? all[pi][0] : all[pi][^1];
+                        double d = D2(tail, q);
+                        if (d < bd) { bd = d; bestId = id; }
+                    }
+                }
+                if (bestId >= 0 && Math.Sqrt(bd) <= r * cell) break;
+            }
+            if (bestId < 0)   // far away: scan whatever is left
+                for (int i = 0; i < n; i++) if (!used[i])
+                    foreach (int e in new[] { 0, 1 })
+                    { var q = e == 0 ? all[i][0] : all[i][^1]; double d = D2(tail, q); if (d < bd) { bd = d; bestId = i * 2 + e; } }
+            int pidx = bestId >> 1; used[pidx] = true; usedCount++;
+            var next = all[pidx];
+            if ((bestId & 1) == 1) { next = new List<Point3>(next); next.Reverse(); }
             result.Add(next);
         }
         return result;

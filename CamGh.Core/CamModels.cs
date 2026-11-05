@@ -114,6 +114,8 @@ public sealed record CamJobResult(List<List<Point3>> Paths, List<OperationResult
 
 public static class CamJobPlanner
 {
+    private static readonly bool Prof = Environment.GetEnvironmentVariable("CAMGH_PROFILE") == "1";
+    internal static void Mark(System.Diagnostics.Stopwatch sw, string what) { if (Prof) { Console.Error.WriteLine($"  [{sw.Elapsed.TotalSeconds,6:0.00}s] {what}"); } }
     private static readonly Point3 ZAxis = new(0, 0, 1);
 
     public static CamJobResult Generate(CamJobRequest job) => Generate(job, null);
@@ -155,6 +157,7 @@ public static class CamJobPlanner
     /// <summary>Plans the job. When snapshots is given it receives a copy of the 3D stock before the first operation and after each one.</summary>
     public static CamJobResult Generate(CamJobRequest job, List<TriDexelStock>? snapshots)
     {
+        var prof = System.Diagnostics.Stopwatch.StartNew();
         if (job.Commands.Count == 0) throw new ArgumentException("At least one CAM command is required.");
         var b = job.Stock.Bounds;
         double extent = Math.Max(b.MaxX - b.MinX, Math.Max(b.MaxY - b.MinY, b.MaxZ - b.MinZ));
@@ -187,11 +190,14 @@ public static class CamJobPlanner
                 }
                 case ParallelFinishingCommand finish:
                 {
+                    Mark(prof, "start parallel");
                     var result = ParallelPlanner.Generate(new ParallelRequest(
                         finish.Mesh,
                         finish.Tool.Diameter * finish.Parameters.StepoverPercent / 100.0,
                         finish.DirectionX, finish.DirectionY, finish.EdgeInset));
+                    Mark(prof, "parallel planned");
                     SubtractFinish(stock, result.Paths, null, finish);
+                    Mark(prof, "parallel subtracted from stock");
                     var retractNote = finish.Parameters.Retract == RetractMove.StayDown
                         ? "StayDown requested; safe clearance links used because in-process stock is not tracked."
                         : $"{finish.Parameters.Retract} retracts generated at segment ends.";
@@ -213,10 +219,13 @@ public static class CamJobPlanner
                 }
                 case RegionFinishingCommand region:
                 {
+                    Mark(prof, "start region");
                     var result = RegionFinishPlanner.Generate(region);
+                    Mark(prof, "region planned");
                     var paths = result.Groups.SelectMany(g => g.Paths).ToList();
                     var axes = result.Groups.SelectMany(g => g.Paths.Select(_ => g.Axis.ToPoint())).ToList();
                     SubtractFinish(stock, paths, axes, region);
+                    Mark(prof, "region subtracted from stock");
                     var note = $"{result.Method} Contacted {result.CoveredAreaFraction:P1} of the surface area; {result.UnreachableAreaFraction:P1} is not reachable by any chosen axis. "
                         + string.Join(" ", result.Groups.Select(g => g.Note));
                     operations.Add(new OperationResult(region.Name, "Region Finishing (3+2)", paths, Measure(paths), note,
@@ -234,6 +243,7 @@ public static class CamJobPlanner
             : c.Parameters.ClearanceOffset);
         if (clearance <= job.Stock.Bounds.MaxZ)
             throw new ArgumentException($"Clearance Z {clearance:g} must be above stock top Z {job.Stock.Bounds.MaxZ:g}.");
+        Mark(prof, "all operations done; building motions");
         var motions = new List<List<Point3>>(); var motionAxes = new List<Point3>(); var motionOps = new List<int>();
         for (int i = 0; i < operations.Count; i++)
         {
@@ -252,7 +262,9 @@ public static class CamJobPlanner
                 start = end;
             }
         }
+        Mark(prof, "motions built");
         double remaining = stock.Volume();
+        var previewSw = prof;
         return new CamJobResult(motions, operations, clearance,
             $"{operations.Count} operation(s), {cuttingPaths.Count} cutting segment(s), {motions.Count} linked motion path(s) including clearance retracts and rapids; clearance Z {clearance:g} {job.Setup.Units} for vertical work. Remaining stock {remaining / 1000:0.#} of {startVolume / 1000:0.#} cm³ (tri-dexel {stock.Resolution:g} mm).",
             motionAxes, stock.PreviewSegments(20_000), remaining, startVolume, motionOps);
@@ -266,7 +278,9 @@ public static class CamJobPlanner
     private static void UpdateStock(TriDexelStock stock, List<List<Point3>> paths, Vec3 axis, CamCommand c)
     {
         double length = Math.Max(2 * c.Tool.Diameter * c.Parameters.StepdownPercent / 100.0, c.Tool.Radius) + c.Tool.Radius;
-        foreach (var p in paths) stock.SubtractPath(Simplify(p, 0.005), axis, c.Tool.Shape, c.Tool.Radius, length);
+        var simplified = new IReadOnlyList<Point3>[paths.Count];
+        Parallel.For(0, paths.Count, i => simplified[i] = Simplify(paths[i], 0.02));
+        stock.SubtractPaths(simplified, new[] { axis }, c.Tool.Shape, c.Tool.Radius, length);
     }
 
     /// <summary>Removes finishing lanes from the shared stock so the simulation shows what each finishing pass takes off.
@@ -274,11 +288,14 @@ public static class CamJobPlanner
     private static void SubtractFinish(TriDexelStock stock, List<List<Point3>> paths, List<Point3>? axes, CamCommand c)
     {
         double length = 3 * c.Tool.Diameter;
-        for (int i = 0; i < paths.Count; i++)
+        var simplified = new IReadOnlyList<Point3>[paths.Count];
+        var vecAxes = new Vec3[paths.Count];
+        Parallel.For(0, paths.Count, i =>
         {
-            var axis = axes is not null && i < axes.Count ? Vec3.From(axes[i]).Normalized() : new Vec3(0, 0, 1);
-            stock.SubtractPath(Simplify(paths[i], 0.005), axis, c.Tool.Shape, c.Tool.Radius, length);
-        }
+            vecAxes[i] = axes is not null && i < axes.Count ? Vec3.From(axes[i]).Normalized() : new Vec3(0, 0, 1);
+            simplified[i] = Simplify(paths[i], 0.02);
+        });
+        stock.SubtractPaths(simplified, vecAxes, c.Tool.Shape, c.Tool.Radius, length);
     }
 
     /// <summary>Drops points that lie within tolerance of the line through their neighbours.</summary>

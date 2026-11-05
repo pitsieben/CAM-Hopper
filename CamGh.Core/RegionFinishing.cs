@@ -33,8 +33,10 @@ public static class RegionFinishPlanner
         // ---- patches: accessibility-constrained spherical k-means on face normals + border smoothing
         var given = cmd.Directions is { Count: > 0 } ? cmd.Directions.Select(Vec3.From).ToList() : null;
         double minIsland = Math.Max(16 * r * r, 0.0005 * totalArea);
+        var swr = System.Diagnostics.Stopwatch.StartNew();
         var seg = PatchSegmenter.Segment(part, cmd.MaxWallAngleDegrees, Math.Max(1, cmd.MaxOrientations), Math.Max(0, cmd.BorderSmoothing), minIsland, given,
             Math.Max(0, cmd.PositionWeight));
+        CamJobPlanner.Mark(swr, "  patch segmentation");
         var region = seg.Labels; var nb = part.Neighbours();
         double unreachable = seg.UnreachableAreaFraction;
 
@@ -72,11 +74,13 @@ public static class RegionFinishPlanner
             int patch = c; var rf = ringFaces;
             bool Accept(int face, double u, double v, double w) =>
                 seg.Field is null ? rf[face] : seg.Margin(face, u, v, w, patch) >= -overlap;
+            CamJobPlanner.Mark(swr, $"  patch {c} lanes begin");
             var paths = RegionLanes(part, axis, allowed, tool.Shape, r, leave, stepover, step, touched, Accept);
             int faces = allowed.Count(x => x);
             groups.Add(new OrientedPaths(axis, paths, 0,
                 $"Patch {c + 1}, axis ({axis.X:0.###}, {axis.Y:0.###}, {axis.Z:0.###}): {faces} face(s), {paths.Count} lane path(s)."));
         }
+        CamJobPlanner.Mark(swr, "  all lanes done");
         double coveredArea = Enumerable.Range(0, part.Count).Where(f => touched[f]).Sum(f => part.Areas[f]) / totalArea;
         int inputFaces = cmd.Mesh.Faces.Length;
         var faceLabels = Enumerable.Repeat(-1, inputFaces).ToArray(); var faceTilt = Enumerable.Repeat(-1.0, inputFaces).ToArray();
@@ -88,6 +92,7 @@ public static class RegionFinishPlanner
             var list = preview[t.Label < 0 ? seg.Axes.Count : t.Label];
             foreach (var p in new[] { t.A, t.B, t.C }) { list.Add(Math.Round(p.X, 4)); list.Add(Math.Round(p.Y, 4)); list.Add(Math.Round(p.Z, 4)); }
         }
+        CamJobPlanner.Mark(swr, "  preview refine done");
         return new RegionFinishResult(groups.Where(g => g.Paths.Count > 0).ToList(), coveredArea, unreachable,
             $"3+2 region finishing: {seg.Axes.Count} patch(es) from k-means on face normals and position (position weight {cmd.PositionWeight:g}; wall limit {cmd.MaxWallAngleDegrees:g}°, line of sight to the spindle), "
             + $"mean tilt {seg.MeanTiltDegrees:0.#}°, max {seg.MaxTiltDegrees:0.#}°; patch borders {seg.BorderLengthBeforeSmoothing:0} mm along mesh edges → {seg.BorderLength:0} mm smooth; "
