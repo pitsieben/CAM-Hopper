@@ -23,6 +23,7 @@ app.MapGet("/api/v1/scene", () => EngineState.Scene is { } s
 app.MapGet("/api/v1/scene/part", () => EngineState.Scene is { } s ? Results.Bytes(s.PartMeshBytes(), "application/octet-stream") : Results.NotFound());
 app.MapGet("/api/v1/scene/stock/{index:int}", (int index) => EngineState.Scene?.StockMeshBytes(index) is { } b ? Results.Bytes(b, "application/octet-stream") : Results.NotFound());
 app.MapGet("/api/v1/scene/paths/{index:int}", (int index) => EngineState.Scene?.PathBytes(index) is { } b ? Results.Bytes(b, "application/octet-stream") : Results.NotFound());
+app.MapGet("/api/v1/scene/frame/{index:int}", (int index) => EngineState.Scene?.FrameMeshBytes(index) is { } b ? Results.Bytes(b, "application/octet-stream") : Results.NotFound());
 app.MapGet("/api/v1/scene/motions", () => EngineState.Scene is { } s ? Results.Bytes(s.MotionBytes(), "application/octet-stream") : Results.NotFound());
 
 // ---- computation
@@ -44,7 +45,14 @@ app.MapPost("/api/v1/job", (CamJobRequest request) =>
     {
         var snapshots = new List<TriDexelStock>();
         var result = CamJobPlanner.Generate(request, snapshots);
-        EngineState.EndJob(new JobScene(request, result, snapshots, watch.Elapsed.TotalSeconds));
+        var scene = new JobScene(request, result, snapshots, watch.Elapsed.TotalSeconds);
+        EngineState.EndJob(scene);
+        // Playback frames replay the motions on the stock; done after replying so Grasshopper never waits for them.
+        _ = Task.Run(() =>
+        {
+            try { var w = Stopwatch.StartNew(); scene.BuildFrames(); EngineState.Log($"Simulation frames ready in {w.Elapsed.TotalSeconds:0.0} s", "Engine"); }
+            catch (Exception ex) { EngineState.Log("Simulation frames failed: " + ex.Message, "Engine", issue: true); }
+        });
         return Results.Ok(result);
     }
     catch (Exception ex) { EngineState.FailJob(ex.Message); return Results.BadRequest(new { error = ex.Message }); }

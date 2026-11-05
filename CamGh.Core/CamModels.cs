@@ -66,8 +66,17 @@ public sealed record MultiAxisRoughingCommand(
     double ToolReach = 0,
     double? FixtureZ = null,
     double GridResolution = 0,
-    double StockResolution = 0)
+    double StockResolution = 0,
+    RoughingStrategy Strategy = RoughingStrategy.SurfaceOffset)
     : CamCommand(Name, Mesh, Tool, Parameters);
+
+/// <summary>
+/// How each 3+2 orientation removes its material.
+/// SurfaceOffset: flat levels one stepdown apart, each floored by the part surface offset by the stock to leave,
+/// so wherever a pass meets the part it follows that offset surface (computed by drop-cutter, as in finishing)
+/// and the last pass leaves a uniform shell. ZLevel: the original stock-aware Z-level engine with raster patterns.
+/// </summary>
+public enum RoughingStrategy { SurfaceOffset = 0, ZLevel = 1 }
 
 /// <summary>
 /// F1: region-based 3+2 finishing. Patches come from accessibility-constrained k-means on face normals and position
@@ -108,6 +117,40 @@ public static class CamJobPlanner
     private static readonly Point3 ZAxis = new(0, 0, 1);
 
     public static CamJobResult Generate(CamJobRequest job) => Generate(job, null);
+
+    /// <summary>
+    /// Replays the planned motions on a copy of the starting stock and keeps a copy every 1/frames of the total
+    /// motion length, tagged with the global motion point index it belongs to (points counted across all motions in
+    /// order). Lets a viewer show material disappearing while the tool plays back, within one operation too.
+    /// </summary>
+    public static List<(int AtPoint, TriDexelStock Stock)> ReplayFrames(CamJobRequest job, CamJobResult result, TriDexelStock start, int frames)
+    {
+        var stock = start.Clone();
+        var list = new List<(int, TriDexelStock)> { (0, stock.Clone()) };
+        var motions = result.Paths; if (motions.Count == 0 || frames < 1) return list;
+        double total = 0;
+        foreach (var m in motions) for (int i = 0; i + 1 < m.Count; i++) total += (Vec3.From(m[i + 1]) - Vec3.From(m[i])).Length;
+        if (total <= 0) return list;
+        double spacing = total / frames, next = spacing, acc = 0; int point = 0;
+        for (int mi = 0; mi < motions.Count; mi++)
+        {
+            var m = motions[mi];
+            int op = result.MotionOperations is { } ops && mi < ops.Count ? ops[mi] : 0;
+            var cmd = op < job.Commands.Count ? job.Commands[op] : job.Commands[^1];
+            var axis = result.MotionAxes is { } ax && mi < ax.Count ? Vec3.From(ax[mi]).Normalized() : new Vec3(0, 0, 1);
+            double length = cmd is MultiAxisRoughingCommand mr && mr.ToolReach > 0 ? mr.ToolReach : 4 * cmd.Tool.Diameter;
+            for (int i = 0; i + 1 < m.Count; i++)
+            {
+                var a = Vec3.From(m[i]); var b = Vec3.From(m[i + 1]);
+                stock.SubtractSweep(a, b, axis, cmd.Tool.Shape, cmd.Tool.Radius, length);
+                acc += (b - a).Length;
+                if (acc >= next) { list.Add((point + i + 1, stock.Clone())); while (next <= acc) next += spacing; }
+            }
+            point += m.Count;
+        }
+        if (list[^1].Item1 != point - 1) list.Add((point - 1, stock.Clone()));
+        return list;
+    }
 
     /// <summary>Plans the job. When snapshots is given it receives a copy of the 3D stock before the first operation and after each one.</summary>
     public static CamJobResult Generate(CamJobRequest job, List<TriDexelStock>? snapshots)

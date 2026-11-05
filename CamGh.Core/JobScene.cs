@@ -3,8 +3,10 @@ namespace CamGh.Core;
 public sealed record SceneTool(double Diameter, string Shape, int Flutes, double Rpm, double CuttingSpeed, double Reach);
 public sealed record SceneOperation(int Index, string Name, string Type, SceneTool Tool, int Paths, int Points, double CutLength,
     double RemovedVolume, int Orientations, int Patches, string Message);
+public sealed record SceneFrame(int AtPoint, double Volume);
 public sealed record SceneInfo(bool HasJob, string CreatedUtc, double Seconds, string Summary, StockBounds? Stock, double StartVolume,
-    double RemainingVolume, List<SceneOperation> Operations, List<double> SnapshotVolumes, int Motions, int PartTriangles);
+    double RemainingVolume, List<SceneOperation> Operations, List<double> SnapshotVolumes, int Motions, int PartTriangles,
+    bool FramesReady = false, List<SceneFrame>? Frames = null);
 
 /// <summary>
 /// Everything the dashboard shows about the last job: summary data as JSON and geometry as compact little-endian binary
@@ -19,6 +21,9 @@ public sealed class JobScene
     public DateTime CreatedUtc { get; }
     public double Seconds { get; }
     private readonly byte[]?[] _stockMeshes;
+    private List<(int AtPoint, TriDexelStock Stock)>? _frames;
+    private byte[]?[] _frameMeshes = Array.Empty<byte[]?>();
+    private List<SceneFrame>? _frameInfo;
     private readonly object _gate = new();
 
     public JobScene(CamJobRequest request, CamJobResult result, IReadOnlyList<TriDexelStock> snapshots, double seconds)
@@ -43,8 +48,10 @@ public sealed class JobScene
             ops.Add(new SceneOperation(i, op.Name, op.Type, tool, op.Quality.PathCount, op.Quality.PointCount, Math.Round(op.Quality.TotalCutLength, 1),
                 Math.Round(removed, 1), orientations, patches, op.Message));
         }
+        List<SceneFrame>? frames; lock (_gate) frames = _frameInfo;
         return new SceneInfo(true, CreatedUtc.ToString("o"), Math.Round(Seconds, 2), Result.Summary, Request.Stock.Bounds,
-            Math.Round(Result.StartStockVolume, 1), Math.Round(Result.RemainingStockVolume, 1), ops, volumes, Result.Paths.Count, PartMesh().Length / 3);
+            Math.Round(Result.StartStockVolume, 1), Math.Round(Result.RemainingStockVolume, 1), ops, volumes, Result.Paths.Count, PartMesh().Length / 3,
+            frames is not null, frames);
     }
 
     /// <summary>Part mesh of the first operation: int32 vertexCount, int32 triangleCount, float32 xyz…, int32 indices….</summary>
@@ -73,6 +80,31 @@ public sealed class JobScene
             var (positions, indices) = Snapshots[index].ToMesh();
             return _stockMeshes[index] = MeshBytes(positions, indices);
         }
+    }
+
+    /// <summary>Builds the playback frames (stock copies along the motion timeline). Meant to run in the background.</summary>
+    public void BuildFrames(int count = 24)
+    {
+        if (Snapshots.Count == 0) return;
+        var frames = CamJobPlanner.ReplayFrames(Request, Result, Snapshots[0], count);
+        var info = frames.Select(f => new SceneFrame(f.AtPoint, Math.Round(f.Stock.Volume(), 1))).ToList();
+        lock (_gate) { _frames = frames; _frameMeshes = new byte[]?[frames.Count]; _frameInfo = info; }
+    }
+
+    /// <summary>Remaining stock surface at playback frame <paramref name="index"/>; null until frames are built.</summary>
+    public byte[]? FrameMeshBytes(int index)
+    {
+        TriDexelStock stock;
+        lock (_gate)
+        {
+            if (_frames is null || index < 0 || index >= _frames.Count) return null;
+            if (_frameMeshes[index] is { } cached) return cached;
+            stock = _frames[index].Stock;
+        }
+        var (positions, indices) = stock.ToMesh();
+        var bytes = MeshBytes(positions, indices);
+        lock (_gate) _frameMeshes[index] = bytes;
+        return bytes;
     }
 
     /// <summary>Cutting paths of one operation: int32 pathCount, int32 counts…, float32 xyz….</summary>

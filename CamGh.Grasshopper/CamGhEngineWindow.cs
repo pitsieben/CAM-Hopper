@@ -2,6 +2,7 @@ using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
 using System.Diagnostics;
+using System.IO;
 
 namespace CamGh.Grasshopper;
 
@@ -32,7 +33,8 @@ internal static class CamGhEngineWindow
                 catch (Exception ex)
                 {
                     _form = null;
-                    RhinoApp.WriteLine($"CamGh: embedded dashboard unavailable ({ex.Message}); opening the system browser.");
+                    var inner = ex.InnerException is { } ie ? $" <- {ie.GetType().Name}: {ie.Message}" : "";
+                    RhinoApp.WriteLine($"CamGh: embedded dashboard unavailable ({ex.GetType().Name}: {ex.Message}{inner}); opening an app window.");
                     _ = OpenInBrowserWhenReadyAsync(simulation);
                 }
             }
@@ -47,7 +49,17 @@ internal static class CamGhEngineWindow
 
     public static void OpenInBrowser(bool simulation)
     {
-        try { Process.Start(new ProcessStartInfo(DashboardUrl + (simulation ? "#simulation" : "")) { UseShellExecute = true }); }
+        var url = DashboardUrl + (simulation ? "#simulation" : "");
+        // Prefer a chrome-less Edge app window (looks like a native window), then the default browser.
+        foreach (var edge in new[] {
+            Environment.ExpandEnvironmentVariables(@"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"),
+            Environment.ExpandEnvironmentVariables(@"%ProgramFiles%\Microsoft\Edge\Application\msedge.exe") })
+        {
+            if (!File.Exists(edge)) continue;
+            try { Process.Start(new ProcessStartInfo(edge, $"--app={url} --window-size=1400,900") { UseShellExecute = false }); return; }
+            catch { }
+        }
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
         catch (Exception ex) { RhinoApp.WriteLine("CamGh: could not open the browser: " + ex.Message); }
     }
 

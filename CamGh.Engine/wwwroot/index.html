@@ -143,7 +143,7 @@
     <div class="sim">
       <div class="viewport">
         <canvas id="gl"></canvas>
-        <div class="hud" id="hud"><div class="label">Simulation</div><div id="hudText">No job loaded</div></div>
+        <div class="hud" id="hud"><div class="label">Simulation</div><div id="hudText">No job loaded</div><div id="hudFrame" style="color:var(--muted)"></div></div>
         <div class="hint">drag: orbit · right-drag / shift-drag: pan · wheel: zoom · double-click: fit</div>
       </div>
       <div class="side">
@@ -166,9 +166,10 @@
         <div class="card">
           <div class="label">Simulation</div>
           <div class="row2"><button class="btn" id="play">Play</button><button class="btn ghost" id="restart">Restart</button>
-            <select id="speed" style="width:110px"><option value="1">1×</option><option value="4" selected>4×</option><option value="16">16×</option><option value="64">64×</option></select></div>
+            <select id="speed" style="width:130px" title="How long the whole job takes to play"><option value="300">5 min</option><option value="120">2 min</option><option value="60" selected>1 min</option><option value="30">30 s</option><option value="10">10 s</option></select></div>
           <div class="row2"><input type="range" id="scrub" min="0" max="0" value="0"></div>
           <label class="check"><input type="checkbox" id="follow" checked> Stock follows simulation</label>
+          <div class="sub" id="frameNote" style="color:var(--muted);font-size:12.5px">simulation frames are computed after each job…</div>
           <div class="removed" id="removed"></div>
         </div>
       </div>
@@ -206,6 +207,7 @@ async function poll() {
     status = await r.json();
     renderStatus();
     if (status.hasJob && status.sceneCreatedUtc !== sceneStamp) await loadScene(status.sceneCreatedUtc);
+    else if (scene && !scene.framesReady) await refreshFrames();
   } catch (e) {
     $("statusDot").className = "dot bad"; $("statusText").textContent = "Engine not reachable";
   }
@@ -248,7 +250,8 @@ const stockCache = new Map();
 async function loadScene(stamp) {
   const info = await (await fetch("api/v1/scene", { cache: "no-store" })).json();
   if (!info.hasJob) return;
-  sceneStamp = stamp; scene = info; stockCache.clear();
+  sceneStamp = stamp; scene = info; stockCache.clear(); frameCache.clear();
+  $("frameNote").textContent = info.framesReady ? `${info.frames.length} simulation frames` : "simulation frames are computed after each job…";
   renderOverview();
   const [part, motions] = await Promise.all([bin("api/v1/scene/part"), bin("api/v1/scene/motions")]);
   scene.part = readMesh(part);
@@ -375,6 +378,36 @@ function buildSceneGpu() {
   gpu.ops = scene.paths.map(p => linesGpu(polylineSegments(p)));
   gpu.links = linesGpu(polylineSegments(scene.motions));
 }
+// Playback frames: the engine replays the motions on the stock in the background and keeps ~24 copies along the
+// timeline. While playing, the stock shown is the last frame at or before the tool, so material disappears as it cuts.
+const frameCache = new Map();
+async function refreshFrames() {
+  const info = await (await fetch("api/v1/scene", { cache: "no-store" })).json();
+  if (!info.hasJob || info.createdUtc !== scene.createdUtc || !info.framesReady) return;
+  scene.framesReady = true; scene.frames = info.frames; frameCache.clear();
+  $("frameNote").textContent = `${info.frames.length} simulation frames`;
+  if ($("follow").checked) updateHud();
+}
+function frameAt(point) {
+  const f = scene.frames; let lo = 0, hi = f.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (f[mid].atPoint <= point) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+function loadFrame(i) {
+  if (!frameCache.has(i)) frameCache.set(i, bin("api/v1/scene/frame/" + i).then(readMesh).then(m => meshGpu(m.pos, m.idx)));
+  return frameCache.get(i);
+}
+async function setStockFrame(i) {
+  i = Math.max(0, Math.min(scene.frames.length - 1, i));
+  const key = "f" + i;
+  if (gpu.stockIndex === key) return;
+  gpu.stockIndex = key;
+  const g = await loadFrame(i);
+  if (i + 1 < scene.frames.length) loadFrame(i + 1);         // prefetch the next one while this plays
+  if (gpu.stockIndex === key) { gpu.stock = g; requestDraw(); }
+  $("hudFrame").textContent = `stock ${(scene.frames[i].volume / 1000).toFixed(0)} cm³`;
+}
+
 async function setStockSnapshot(i) {
   if (!scene) return;
   i = Math.max(0, Math.min(scene.snapshotVolumes.length - 1, i));
@@ -524,7 +557,7 @@ function updateHud() {
   const s = simState(); if (!s) { $("hudText").textContent = "No motions"; return; }
   const o = scene.operations[s.op];
   $("hudText").innerHTML = `${esc(o.name)}<br>X ${s.p[0].toFixed(1)}  Y ${s.p[1].toFixed(1)}  Z ${s.p[2].toFixed(1)}<br>axis ${s.axis.map(v => v.toFixed(2)).join(", ")}<br>${(timeline.cum[s.index] / 1000).toFixed(2)} / ${(timeline.length / 1000).toFixed(2)} m`;
-  if ($("follow").checked) setStockSnapshot(s.op);           // stock before the running operation
+  if ($("follow").checked) { if (scene.framesReady && scene.frames?.length) setStockFrame(frameAt(s.index)); else setStockSnapshot(s.op); }
 }
 $("scrub").oninput = () => { cursor = +$("scrub").value; updateHud(); requestDraw(); };
 $("play").onclick = () => { playing = !playing; $("play").textContent = playing ? "Pause" : "Play"; lastT = performance.now(); if (playing) requestAnimationFrame(tick); };
@@ -533,11 +566,11 @@ $("follow").onchange = () => { if ($("follow").checked) updateHud(); };
 function tick(now) {
   if (!playing || !timeline) return;
   const dt = (now - lastT) / 1000; lastT = now;
-  const mmPerSecond = 40 * parseFloat($("speed").value);
+  const mmPerSecond = timeline.length / parseFloat($("speed").value);   // the select sets the whole job's play time
   const target = timeline.cum[Math.floor(cursor)] + dt * mmPerSecond;
   let p = Math.floor(cursor); while (p < timeline.total - 1 && timeline.cum[p + 1] <= target) p++;
   cursor = p;
-  if (p >= timeline.total - 1) { playing = false; $("play").textContent = "Play"; if ($("follow").checked) setStockSnapshot(scene.snapshotVolumes.length - 1); }
+  if (p >= timeline.total - 1) { playing = false; $("play").textContent = "Play"; if ($("follow").checked) { if (scene.framesReady && scene.frames?.length) setStockFrame(scene.frames.length - 1); else setStockSnapshot(scene.snapshotVolumes.length - 1); } }
   $("scrub").value = String(p); updateHud(); requestDraw();
   if (playing) requestAnimationFrame(tick);
 }

@@ -107,6 +107,16 @@ public sealed class TriDexelStock
         for (int i = 0; i <= n; i++) { var p = a + d * ((double)i / n); SubtractPlanar(p, p, w, shape, radius, length); }
     }
 
+    private double _removedLength;   // accumulated by SubtractPlanar on ray family 0 while measuring
+
+    /// <summary>Same as <see cref="SubtractSweep"/>, returning the volume (mm³) the move actually removed.</summary>
+    public double SubtractSweepMeasured(Vec3 a, Vec3 b, Vec3 axis, ToolShape shape, double radius, double length)
+    {
+        _removedLength = 0;
+        SubtractSweep(a, b, axis, shape, radius, length);
+        return _removedLength * _step[0][0] * _step[0][1];
+    }
+
     public void SubtractPath(IReadOnlyList<Point3> path, Vec3 axis, ToolShape shape, double radius, double length)
     {
         if (path.Count == 1) { var p = Vec3.From(path[0]); SubtractSweep(p, p, axis, shape, radius, length); return; }
@@ -142,10 +152,14 @@ public sealed class TriDexelStock
                     var o = RayBase(f, iu, iv);
                     if (!cutter.Intersect(o, e, out double t0, out double t1)) continue;
                     if (t1 < cur[0] || t0 > cur[^1]) continue;
-                    rays[idx] = SubtractInterval(cur, t0, t1);
+                    var next = SubtractInterval(cur, t0, t1);
+                    if (f == 0) _removedLength += Span(cur) - (next is null ? 0 : Span(next));
+                    rays[idx] = next;
                 }
         }
     }
+
+    private static double Span(double[] r) { double s = 0; for (int k = 0; k < r.Length; k += 2) s += r[k + 1] - r[k]; return s; }
 
     private static double[]? SubtractInterval(double[] cur, double t0, double t1)
     {
