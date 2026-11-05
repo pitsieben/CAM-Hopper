@@ -128,7 +128,7 @@ public static class HorizontalRoughPlanner
                 ?GenerateMeshOffsetPattern(r.Mesh,active,legal,s,h,z,r.ToolRadius,r.StockToLeave,r.Stepover)
                 :new List<List<Point3>>();
             bool vectorLayer=layer.Count>0;
-            if(!vectorLayer&&!useMeshOffsets)layer=GeneratePattern(active,nx,ny,s,h,z,laneStride,r.Pattern,r.ToolRadius);
+            if(!vectorLayer&&!useMeshOffsets)layer=CollapseTinyLoops(GeneratePattern(active,nx,ny,s,h,z,laneStride,r.Pattern,r.ToolRadius),r.ToolRadius);
             layer=vectorLayer?LinkVectorPaths(layer,legal,s,h,z):LinkPaths(layer,legal,s,h,z);
             if(!vectorLayer)layer=SmoothPathsWithinSafeArea(layer,legal,s,h);
             List<Point3> transition=new();bool canLinkDown=false;
@@ -171,6 +171,28 @@ public static class HorizontalRoughPlanner
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// A one- or two-cell island of material contours into a loop only a few millimetres round. With a cutter
+    /// many times that size the loop is just a costly way of visiting one spot, and drawn it reads as a diamond
+    /// artifact. Replace every closed loop whose perimeter is under one cutter radius by the straight chord
+    /// between its two farthest points: the cutter disk swept along that chord covers the loop, so the same
+    /// material is removed, and the chord links into neighbouring paths like any other cut.
+    /// </summary>
+    private static List<List<Point3>> CollapseTinyLoops(List<List<Point3>> paths,double toolRadius)
+    {
+        var output=new List<List<Point3>>(paths.Count);
+        foreach(var p in paths)
+        {
+            bool closed=p.Count>3&&Distance2(p[0],p[^1])<1e-12;
+            double perimeter=0;for(int i=0;i+1<p.Count;i++)perimeter+=Math.Sqrt(Distance2(p[i],p[i+1]));
+            if(!closed||perimeter>=toolRadius){output.Add(p);continue;}
+            var best=(A:p[0],B:p[1],D:-1.0);
+            for(int i=0;i<p.Count-1;i++)for(int j=i+1;j<p.Count-1;j++){double d=Distance2(p[i],p[j]);if(d>best.D)best=(p[i],p[j],d);}
+            output.Add(new List<Point3>{best.A,best.B});
+        }
+        return output;
     }
 
     private static List<List<Point3>> LinkPaths(List<List<Point3>> cuts,bool[,] legal,StockBounds stock,double h,double z)
@@ -244,44 +266,70 @@ public static class HorizontalRoughPlanner
 
     private static List<List<Point3>> SmoothPathsWithinSafeArea(List<List<Point3>> paths,bool[,] legal,StockBounds stock,double h)
     {
+        // Raster contours and grid links inherit the cell staircase of the legality mask. Resample each
+        // path to half-cell spacing, low-pass it in arc length (eight binomial passes, sigma ~1.4 cells,
+        // which spans a staircase period on shallow slopes), then enforce safety per vertex: any vertex
+        // whose neighbouring segments leave the legal cells is pulled back towards its original position,
+        // so one tight spot no longer forces the whole path back to its raw staircase.
         var result=new List<List<Point3>>(paths.Count);
         foreach(var source in paths)
         {
-            if(source.Count<5){result.Add(source);continue;}
-            bool closed=Distance2(source[0],source[^1])<1e-12;
-            int count=closed?source.Count-1:source.Count;var original=source.Take(count).ToList();var candidate=original.ToList();
-            // Low-pass the raster contour in point space. Repeating the compact binomial
-            // filter removes cell-scale zigzags while retaining the larger offset shape.
-            for(int pass=0;pass<2;pass++)
+            if(source.Count<3){result.Add(source);continue;}
+            bool closed=source.Count>3&&Distance2(source[0],source[^1])<1e-12;
+            var original=Resample(closed?source.Take(source.Count-1).ToList():source,h*.5,closed);
+            int n=original.Count;if(n<5){result.Add(source);continue;}
+            var current=original.ToList();
+            for(int pass=0;pass<8;pass++)
             {
-                var filtered=candidate.ToList();
-                for(int i=0;i<count;i++)
+                var next=current.ToList();
+                for(int i=0;i<n;i++)
                 {
-                    if(!closed&&(i==0||i==count-1))continue;
-                    Point3 At(int k)=>candidate[closed?(k+count)%count:Math.Clamp(k,0,count-1)];
+                    if(!closed&&(i<2||i>n-3))continue;
+                    Point3 At(int k)=>current[closed?((k%n)+n)%n:Math.Clamp(k,0,n-1)];
                     var p0=At(i-2);var p1=At(i-1);var p2=At(i);var p3=At(i+1);var p4=At(i+2);
-                    double x=(p0.X+4*p1.X+6*p2.X+4*p3.X+p4.X)/16;
-                    double y=(p0.Y+4*p1.Y+6*p2.Y+4*p3.Y+p4.Y)/16;
+                    double x=(p0.X+4*p1.X+6*p2.X+4*p3.X+p4.X)/16,y=(p0.Y+4*p1.Y+6*p2.Y+4*p3.Y+p4.Y)/16;
                     double dx=x-original[i].X,dy=y-original[i].Y,move=Math.Sqrt(dx*dx+dy*dy),limit=h*1.5;
-                    if(move>limit){double scale=limit/move;x=original[i].X+dx*scale;y=original[i].Y+dy*scale;}
-                    filtered[i]=new Point3(x,y,original[i].Z);
+                    if(move>limit){double k=limit/move;x=original[i].X+dx*k;y=original[i].Y+dy*k;}
+                    next[i]=new Point3(x,y,original[i].Z);
                 }
-                candidate=filtered;
+                current=next;
             }
-            bool accepted=false;double blend=1;
-            for(int attempt=0;attempt<6;attempt++,blend*=.5)
+            // Local safety repair, judged against the unsmoothed path: a smoothed segment is acceptable if it is
+            // legal or if the original segment it replaces was already outside the legal cells (raster contours
+            // can sit within half a cell of the mask edge, so an absolute test would reject them before smoothing).
+            int segCount=closed?n:n-1;
+            var origOk=new bool[segCount];
+            for(int i=0;i<segCount;i++)origOk[i]=IsSegmentSafe(original[i],original[(i+1)%n],legal,stock,h);
+            bool SegOk(int i)=>!origOk[i]||IsSegmentSafe(current[i],current[(i+1)%n],legal,stock,h);
+            for(int attempt=0;attempt<8;attempt++)
             {
-                var trial=new List<Point3>(count+(closed?1:0));
-                for(int i=0;i<count;i++)trial.Add(new Point3(original[i].X+(candidate[i].X-original[i].X)*blend,original[i].Y+(candidate[i].Y-original[i].Y)*blend,original[i].Z));
-                if(closed)trial.Add(trial[0]);
-                bool safe=true;
-                for(int i=0;i+1<trial.Count;i++)if(!IsSegmentSafe(trial[i],trial[i+1],legal,stock,h)){safe=false;break;}
-                if(!safe)continue;
-                result.Add(trial);accepted=true;break;
+                var offending=new HashSet<int>();
+                for(int i=0;i<segCount;i++)if(!SegOk(i)){offending.Add(i);offending.Add((i+1)%n);}
+                if(offending.Count==0)break;
+                foreach(int i in offending)
+                    current[i]=attempt==7?original[i]:new Point3((current[i].X+original[i].X)*.5,(current[i].Y+original[i].Y)*.5,original[i].Z);
             }
-            if(!accepted)result.Add(source);
+            bool safe=true;for(int i=0;i<segCount&&safe;i++)safe=SegOk(i);
+            if(!safe)current=original.ToList();
+            if(closed)current.Add(current[0]);
+            result.Add(current);
         }
         return result;
+    }
+
+    private static List<Point3> Resample(List<Point3> pts,double spacing,bool closed)
+    {
+        var src=closed?pts.Append(pts[0]).ToList():pts;var output=new List<Point3>{src[0]};double carry=0;
+        for(int i=0;i+1<src.Count;i++)
+        {
+            var a=src[i];var b=src[i+1];double len=Math.Sqrt(Distance2(a,b));if(len<1e-12)continue;
+            double t=spacing-carry;
+            while(t<len-1e-9){double u=t/len;output.Add(new Point3(a.X+(b.X-a.X)*u,a.Y+(b.Y-a.Y)*u,a.Z+(b.Z-a.Z)*u));t+=spacing;}
+            carry=len-(t-spacing);
+        }
+        if(closed){if(Distance2(output[^1],output[0])<spacing*spacing*.25)output.RemoveAt(output.Count-1);}
+        else if(Distance2(output[^1],src[^1])>1e-12)output.Add(src[^1]);
+        return output;
     }
 
     private static bool TryLinkDown(Point3 previousEnd,List<Point3> nextPath,bool[,] legal,StockBounds stock,double h,double z,out List<Point3> transition)
@@ -319,7 +367,25 @@ public static class HorizontalRoughPlanner
         foreach(int node in cells){var p=new Point3(stock.MinX+(node/ny)*h,stock.MinY+(node%ny)*h,z);if(Distance2(route[^1],p)>1e-12)route.Add(p);}
         if(Distance2(route[^1],end)>1e-12)route.Add(end);
         for(int k=0;k+1<route.Count;k++)if(!IsSegmentSafe(route[k],route[k+1],legal,stock,h))return null;
-        return route;
+        return StringPull(route,legal,stock,h);
+    }
+
+    /// <summary>
+    /// A* walks cell centres in eight directions, so a raw route is a 45/90-degree staircase. Greedily
+    /// replace it with the longest safe straight segments (the "string pulling" of grid path planning):
+    /// from each kept point, jump to the farthest later point still reachable in a straight safe line.
+    /// </summary>
+    private static List<Point3> StringPull(List<Point3> route,bool[,] legal,StockBounds stock,double h)
+    {
+        if(route.Count<=2)return route;
+        var pulled=new List<Point3>{route[0]};int at=0;
+        while(at<route.Count-1)
+        {
+            int next=at+1;
+            for(int k=route.Count-1;k>at+1;k--)if(IsSegmentSafe(route[at],route[k],legal,stock,h)){next=k;break;}
+            pulled.Add(route[next]);at=next;
+        }
+        return pulled;
     }
 
     private static bool IsSafePoint(Point3 p,bool[,] legal,StockBounds stock,double h)

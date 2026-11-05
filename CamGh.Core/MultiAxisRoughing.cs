@@ -60,7 +60,9 @@ public static class MultiAxisRoughPlanner
         double stepdown = tool.Diameter * cmd.Parameters.StepdownPercent / 100.0;
         double stepover = tool.Diameter * cmd.Parameters.StepoverPercent / 100.0;
         var frame = Frame.FromAxis(axis);
-        double h = cmd.GridResolution > 0 ? cmd.GridResolution : Math.Clamp(r * 0.3, 0.4, 2.0);
+        // Default layer grid: at most 1 mm. A 2 mm grid (the old default for a 16 mm cutter) both coarsened the
+        // cut contours into visible staircases and left about twice the skin over the part for finishing.
+        double h = cmd.GridResolution > 0 ? cmd.GridResolution : Math.Clamp(r * 0.15, 0.5, 1.0);
         var lb = frame.LocalBounds(stock.Bounds, r + 3 * h + 1);
         while ((Math.Ceiling((lb.MaxX - lb.MinX) / h) + 1) * (Math.Ceiling((lb.MaxY - lb.MinY) / h) + 1) > 1_500_000) h *= 1.2;
         lb = frame.LocalBounds(stock.Bounds, r + 3 * h + 1);

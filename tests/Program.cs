@@ -80,6 +80,24 @@ Console.WriteLine($"Roughing: {sw.Elapsed.TotalSeconds:0.0}s, {rr.Groups.Count} 
 foreach (var g in rr.Groups) Console.WriteLine("   " + g.Note);
 Check(rr.Groups.Count >= 3, $"several orientations used ({rr.Groups.Count})");
 Check(rr.EndVolume < rr.StartVolume * 0.6, $"removed {(1 - rr.EndVolume / rr.StartVolume):P0} of the block");
+// Path quality: no tiny closed loops (grid-island "diamonds") and few cell-sized staircase turns.
+{
+    int loops = 0, sharp = 0, turns = 0;
+    foreach (var g in rr.Groups) foreach (var p in g.Paths)
+    {
+        double L = 0; for (int i = 0; i + 1 < p.Count; i++) L += (Vec3.From(p[i + 1]) - Vec3.From(p[i])).Length;
+        if (p.Count > 3 && (Vec3.From(p[^1]) - Vec3.From(p[0])).Length < 1e-6 && L < roughTool.Radius) loops++;
+        for (int i = 1; i + 1 < p.Count; i++)
+        {
+            var a = Vec3.From(p[i]) - Vec3.From(p[i - 1]); var b = Vec3.From(p[i + 1]) - Vec3.From(p[i]);
+            if (a.Length < 1e-9 || b.Length < 1e-9) continue; turns++;
+            double ang = Math.Acos(Math.Clamp(a.Dot(b) / (a.Length * b.Length), -1, 1)) * 180 / Math.PI;
+            if (ang > 30 && a.Length < 3.5 && b.Length < 3.5) sharp++;
+        }
+    }
+    Check(loops == 0, $"no closed roughing loops smaller than the cutter radius ({loops})");
+    Check(sharp < 0.08 * Math.Max(1, turns), $"staircase turns are {100.0 * sharp / Math.Max(1, turns):0.0}% of path vertices (limit 8%)");
+}
 // Gouge check: drop a flat cutter in each group's frame; every CL point must sit at or above contact + allowance.
 {
     int checkedPts = 0, bad = 0; double worst = 0;

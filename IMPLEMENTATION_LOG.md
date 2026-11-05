@@ -156,6 +156,15 @@ All earlier checks still pass, including the gouge check on finishing.
 
 - 3 November 2026: one-click packaging. A new publish profile, `CamGh.Engine/Properties/PublishProfiles/CamGhPackage.pubxml`, publishes the engine. A post-publish target, `CamGhPackage` in `CamGh.Engine.csproj`, then builds the Grasshopper project and fills `publish/package`. It has not been run yet, because no .NET SDK was reachable from the build environment. The first Publish in Visual Studio is its test.
 
+- 5 November 2026: multi-axis roughing path artifacts fixed. On sculpture.stl (Ø16 flat, Offset pattern), 22.8% of path vertices were cell-sized 45°/90° turns and 53 tiny closed loops appeared. There were three causes:
+  - Link moves were A* routes walked cell-to-cell on the 8-neighbour grid. They are now string-pulled to the longest safe straight segments (`StringPull`).
+  - Cut contours traced along the binary legality mask copied its staircase. The smoother in `SmoothPathsWithinSafeArea` was effectively never applied near the part, because its absolute safety test rejected paths the generator itself places within half a cell of the mask edge. It now resamples at half-cell spacing, low-passes over about 1.4 cells, and repairs safety per vertex relative to the original path.
+  - One-cell islands contoured into 3 mm "diamonds". These are now collapsed to a chord (`CollapseTinyLoops`). That removes the same material, because the cutter disk covers the loop.
+  - The default multi-axis grid went from clamp(0.3r, 0.4, 2) mm to clamp(0.15r, 0.5, 1) mm.
+  - Result on the sculpture: staircase turns 2.7%, removal 1,437 → 1,542 cm³, skin left over the part median 3.6 → 2.1 mm and p90 6.3 → 4.6 mm; runtime 7 → 13 s.
+  - Rejected along the way: dropping small cut islands per layer. Those are cross-sections of real material columns, so dropping them raised the p90 skin to 14.6 mm.
+  - Regression checks were added for tiny loops and staircase share.
+
 ## Main project files
 
 - `CamGh.Core\HorizontalRoughing.cs` — roughing layers, mesh contours, closure, offsets, stock/collision checks, linking.
