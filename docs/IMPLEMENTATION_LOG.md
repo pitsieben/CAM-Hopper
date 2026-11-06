@@ -154,7 +154,7 @@ All earlier checks still pass, including the gouge check on finishing.
   - Grasshopper: `CamGhCoreAttributes.cs` adds the Settings button. `CamGhEngineWindow.cs` is now an Eto `WebView` window on the dashboard, with a browser fallback. CAM Core autostarts the engine and shows its status as the component message. The old status pop-up on placement is gone.
   - Tests: a stock-surface watertight and volume check was added. All checks pass. The dashboard was checked with the real job data in headless Chromium. The Grasshopper and engine projects compile against the Rhino 8 and ASP.NET assemblies, but have not been run in Rhino yet.
 
-- 3 November 2026: one-click packaging. A new publish profile, `CamGh.Engine/Properties/PublishProfiles/CamGhPackage.pubxml`, publishes the engine. A post-publish target, `CamGhPackage` in `CamGh.Engine.csproj`, then builds the Grasshopper project and fills `publish/package`. It has not been run yet, because no .NET SDK was reachable from the build environment. The first Publish in Visual Studio is its test.
+- 3 November 2026: one-click packaging. A new publish profile, `src/CamGh.Engine/Properties/PublishProfiles/CamGhPackage.pubxml`, publishes the engine. A post-publish target, `CamGhPackage` in `CamGh.Engine.csproj`, then builds the Grasshopper project and fills `publish/package`. It has not been run yet, because no .NET SDK was reachable from the build environment. The first Publish in Visual Studio is its test.
 
 - 5 November 2026: multi-axis roughing path artifacts fixed. On sculpture.stl (Ø16 flat, Offset pattern), 22.8% of path vertices were cell-sized 45°/90° turns and 53 tiny closed loops appeared. There were three causes:
   - Link moves were A* routes walked cell-to-cell on the 8-neighbour grid. They are now string-pulled to the longest safe straight segments (`StringPull`).
@@ -187,5 +187,5 @@ All earlier checks still pass, including the gouge check on finishing.
 - `CamGh.Grasshopper\CamGhCoreAttributes.cs`, `CamGhEngineWindow.cs` — Settings button and dashboard window.
 - `CamGh.Grasshopper\CamGhCoreComponent.cs` — Grasshopper job submission and outputs.
 - `CamGh.Grasshopper\OperationAnalysisComponent.cs` — operation report, speed, path level, point and curve outputs.
-- `CamGh.Grasshopper\ComponentIcons.cs` — transparent component icons.
+- `CamGh.Grasshopper\ComponentIcons.cs` — pixel-art component icons.
 - `README.md` in the project root — build instructions, component connections, and algorithm notes.

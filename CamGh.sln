@@ -3,11 +3,11 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamGh.Core", "CamGh.Core\CamGh.Core.csproj", "{13C8D46C-5277-4EBF-94F2-741E4A09D7A1}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamGh.Core", "src\CamGh.Core\CamGh.Core.csproj", "{13C8D46C-5277-4EBF-94F2-741E4A09D7A1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamGh.Engine", "CamGh.Engine\CamGh.Engine.csproj", "{2F7837CD-6E34-4325-BEE4-50B7F2423A72}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamGh.Engine", "src\CamGh.Engine\CamGh.Engine.csproj", "{2F7837CD-6E34-4325-BEE4-50B7F2423A72}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamGh.Grasshopper", "CamGh.Grasshopper\CamGh.Grasshopper.csproj", "{CFF9AC42-9860-4E03-B99F-DF423944DCB0}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CamGh.Grasshopper", "src\CamGh.Grasshopper\CamGh.Grasshopper.csproj", "{CFF9AC42-9860-4E03-B99F-DF423944DCB0}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
