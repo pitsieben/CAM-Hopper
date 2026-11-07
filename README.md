@@ -129,6 +129,10 @@ A headless regression test for the 3D stock, 3+2 roughing and region finishing i
 
 The Grasshopper project references the RhinoCommon, Grasshopper and GH_IO assemblies of a local Rhino 8 install at `C:\Program Files\Rhino 8`. The engine stays available if CAM Core is removed from a definition, and is shut down when Rhino exits. It is assigned to a Windows job with kill-on-close and also has a process-exit cleanup fallback.
 
+## Working with Claude
+
+See [CLAUDE.md](CLAUDE.md) and [.claude/agents](.claude/agents) for the project notes and the multi-agent setup.
+
 ## Further reading
 
 - [Algorithms and limits](docs/algorithms.md)
