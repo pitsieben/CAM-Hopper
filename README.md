@@ -53,6 +53,7 @@ docs/
   algorithms.md          how the planners work, limits, next steps
   IMPLEMENTATION_LOG.md  dated build history
   references.md          papers and related tools
+  research-papers.md     summary of the supplied papers
   images/                screenshots and icons
 ```
 
@@ -138,4 +139,5 @@ See [CLAUDE.md](CLAUDE.md) and [.claude/agents](.claude/agents) for the project 
 - [Algorithms and limits](docs/algorithms.md)
 - [Implementation log](docs/IMPLEMENTATION_LOG.md)
 - [References](docs/references.md)
+- [Research papers and their relevance](docs/research-papers.md)
 - [Third-party notices](THIRD-PARTY-NOTICES.md) · Licence: [MIT](LICENSE)
